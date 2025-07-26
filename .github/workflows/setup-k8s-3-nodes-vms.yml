@@ -1,0 +1,95 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "Setup 3 VMs for k8s via Tailscale"
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  # VM_TEMPLATE_ID: 2009 # vm模板的ID
+  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: Tailscale Connect
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # 2️⃣  正常通过 100.x 或主机名访问远程机
+      - name: Remote command via SSH
+        run: |
+          # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+          # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+          tailscale status
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+
+          cat > myscript.sh <<'EOF'
+          TMEPLATE='2009' # vm模板的ID
+          CIDR='10.10.10' # '192.168.168' vmbr0 vmbr1 的网段
+          # k8s controlplane 4C8G & worker node 8C12G
+          for i in 11 101 102
+          do
+            VM_ID=10${i}
+                  pct destroy ${VM_ID} --force
+            qm shutdown $VM_ID -forceStop
+            sleep 2
+            qm destroy $VM_ID -purge
+            qm clone $TMEPLATE $VM_ID
+            qm set $VM_ID --core $(test $i -ge 100 && echo 8 || echo 4) \
+                      --memory $(test $i -ge 100 && echo 12288 || echo 8192) --name node-${i}
+            qm set $VM_ID --ipconfig0 ip=${CIDR}.${i}/24,gw=${CIDR}.1  # 设置ip
+            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${CIDR}.${i}"
+            qm disk resize $VM_ID scsi0 100G # 设置硬盘
+            qm start $VM_ID
+          done
+          EOF
+
+          cat myscript.sh
+
+          # 把本地脚本复制过去并立即执行
+          cat myscript.sh | ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+
+
+
+      # - uses: actions/checkout@v4
+
+      # - name: Install OS base pkgs
+      #   run: |
+      #     sudo apt-get update --yes -qq
+      #     sudo apt-get install --yes --no-install-recommends python3-pip unzip curl wget jq git build-essential -qq
+
+
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v3    # 安装 Docker Buildx 工具链
+
+
+      # - name: Debug
+      #   run: |
+      #     pwd
+      #     ls
+      #     qm list
+
+    
