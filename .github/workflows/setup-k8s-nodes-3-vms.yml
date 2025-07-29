@@ -51,7 +51,7 @@ jobs:
 
           cat > myscript.sh <<'EOF'
           # k8s controlplane 4C8G & worker node 8C12G
-          for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE01_IP }}
+          for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
           do
             VM_ID=10${i##*.}
             CIDR=${i%%.*} # '192.168.168' vmbr0 vmbr1 的网段
