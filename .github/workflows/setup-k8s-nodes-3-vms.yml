@@ -54,9 +54,9 @@ jobs:
           for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
           do
             VM_ID=10${i##*.}
-            echo $VM_ID
+            echo VM_ID $VM_ID
             CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
-            echo $CIDR
+            echo CIDR $CIDR
             pct destroy ${VM_ID} --force
             qm shutdown $VM_ID -forceStop
             sleep 2
