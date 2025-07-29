@@ -10,7 +10,10 @@ on:
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
-  # VM_TEMPLATE_ID: 2009 # vm模板的ID
+  VM_TEMPLATE_ID: 2009 # vm模板的ID
+  MASTER_IP: 10.10.10.11
+  NODE01_IP: 10.10.10.101
+  NODE02_IP: 10.10.10.102
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -47,21 +50,20 @@ jobs:
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
 
           cat > myscript.sh <<'EOF'
-          TMEPLATE='2009' # vm模板的ID
-          CIDR='10.10.10' # '192.168.168' vmbr0 vmbr1 的网段
           # k8s controlplane 4C8G & worker node 8C12G
-          for i in 11 101 102
+          for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE01_IP }}
           do
-            VM_ID=10${i}
-                  pct destroy ${VM_ID} --force
+            VM_ID=10${i##*.}
+            CIDR=${i%%.*} # '192.168.168' vmbr0 vmbr1 的网段
+            pct destroy ${VM_ID} --force
             qm shutdown $VM_ID -forceStop
             sleep 2
             qm destroy $VM_ID -purge
-            qm clone $TMEPLATE $VM_ID
+            qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID
             qm set $VM_ID --core $(test $i -ge 100 && echo 8 || echo 4) \
-                      --memory $(test $i -ge 100 && echo 12288 || echo 8192) --name node-${i}
-            qm set $VM_ID --ipconfig0 ip=${CIDR}.${i}/24,gw=${CIDR}.1  # 设置ip
-            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${CIDR}.${i}"
+                      --memory $(test $i -ge 100 && echo 12288 || echo 8192) --name node-${VM_ID}
+            qm set $VM_ID --ipconfig0 ip=${i}/24,gw=${CIDR}.1  # 设置ip
+            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${i}"
             qm disk resize $VM_ID scsi0 100G # 设置硬盘
             qm start $VM_ID
           done
