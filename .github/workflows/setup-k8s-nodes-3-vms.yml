@@ -55,7 +55,7 @@ jobs:
           do
             VM_ID=10${i##*.}
             echo $VM_ID
-            CIDR=${i%%.*} # '192.168.168' vmbr0 vmbr1 的网段
+            CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
             echo $CIDR
             pct destroy ${VM_ID} --force
             qm shutdown $VM_ID -forceStop
