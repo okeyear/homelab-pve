@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "k3s Setup k8s cluster"
+name: "Setup k3s cluster"
 
 # Controls when the workflow will run
 on:
@@ -10,12 +10,10 @@ on:
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
-  # VM_TEMPLATE_ID: 2009 # vm模板的ID
-  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
-  MASTER_IP: 10.10.10.16
-  WORKER1_IP: 10.10.10.111
-  WORKER2_IP: 10.10.10.112
-  K3S_VERSION: ${{ secrets.K3S_VERSION }}
+  MASTER_IP: 10.10.10.11
+  NODE01_IP: 10.10.10.101
+  NODE02_IP: 10.10.10.102  
+  # K3S_VERSION: ${{ secrets.K3S_VERSION }}
   INSTALL_DIR: /tmp/k3s-install
   SSH_OPTS: >
     -o StrictHostKeyChecking=no
@@ -58,132 +56,62 @@ jobs:
 
 
 
-      # - name: get k0s latest version
-      #   run: |
-      #     function get_github_latest_release() {
-      #       curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
-      #           grep '"tag_name":' |                                          # Get tag line
-      #           sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
-      #     }
+      - name: get k3s latest version
+        run: |
+          function get_github_latest_release() {
+            curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+                grep '"tag_name":' |                                          # Get tag line
+                sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
+          }
 
-      #     # k0sctl
-      #     VERSION=$(get_github_latest_release k0sproject/k0sctl)
-      #     echo "K0SCTL_VERSION=${VERSION}" >> $GITHUB_ENV
-      #     # k0s
-      #     VERSION=$(get_github_latest_release k0sproject/k0s)
-      #     echo "K0S_VERSION=${VERSION}" >> $GITHUB_ENV
-
-      # - name: Cache k0sctl binary
-      #   id:   cache-k0sctl
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/k0sctl
-      #     key: k0sctl-${{ env.K0SCTL_VERSION }}-linux-amd64
-
-      # - name: Download k0sctl (if cache miss)
-      #   if: steps.cache-k0sctl.outputs.cache-hit != 'true'
-      #   run: |
-      #     wget -q "https://github.com/k0sproject/k0sctl/releases/download/${{ env.K0SCTL_VERSION }}/k0sctl-linux-amd64" -O "/tmp/k0sctl"
-
-      # - name: Cache k0s binary
-      #   id:   cache-k0s
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/k0s
-      #     key: k0s-${{ env.K0S_VERSION }}-amd64
-
-      # - name: Download k0s (if cache miss)
-      #   if: steps.cache-k0s.outputs.cache-hit != 'true'
-      #   run: |
-      #     wget -q "https://github.com/k0sproject/k0s/releases/download/${{ env.K0S_VERSION }}/k0s-${{ env.K0S_VERSION }}-amd64" -O "/tmp/k0s"
-
-      # - name: install k0s k0sctl
-      #   run: |
-      #     sudo install -m 755 /tmp/k0sctl /usr/local/bin/k0sctl
-      #     sudo install -m 755 /tmp/k0s /usr/local/bin/k0s          
-
-      #     # 下载离线包
-      #     k0s airgap list-images --all > airgap-images.txt
-
-      # - name: Cache airgap images
-      #   id:   cache-airgap-images
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/image-bundle.tar
-      #     key: ${{ hashFiles('airgap-images.txt') }}
-
-      # - name: download k0s airgap bundle-artifacts images
-      #   if: steps.cache-airgap-images.outputs.cache-hit != 'true'
-      #   run: |
-      #     # 下载离线包
-      #     # 方式1  k0s
-      #     # k0s airgap list-images --all > airgap-images.txt
-      #     k0s airgap bundle-artifacts -v -o /tmp/image-bundle.tar < airgap-images.txt
-      #     # check
-      #     pwd
-      #     # ls
-      #     ls /tmp
+          #
+          VERSION=$(get_github_latest_release k3s-io/k3s)
+          echo "K3S_VERSION=${VERSION}" >> $GITHUB_ENV
 
 
+      - name: Cache k3s images
+        id:   cache-k3s-images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/k3s-airgap-images-amd64.tar.gz
+          key: k3s-${{ env.K3S_VERSION }}-linux-amd64
 
-      # - name: prepare k0sctl.yaml
-      #   # if: steps.ache-airgap-images.outputs.cache-hit != 'true'
-      #   run: |
-      #     CIDR='10.10.10'
-      #     k0sctl init $CIDR.11 $CIDR.101 $CIDR.102  > k0sctl.yaml
-      #     sed -i '/keyPath/s/null/\/root\/.ssh\/id_rsa/' k0sctl.yaml
+      - name: Download k3s images (if cache miss)
+        if: steps.cache-k3s-images.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          wget -q "https://github.com/k3s-io/k3s/releases/download/${{ env.K3S_VERSION }}/k3s-airgap-images-amd64.tar.gz"
+          wget -q "https://github.com/k3s-io/k3s/releases/download/${{ env.K3S_VERSION }}/k3s"
+          curl https://get.k3s.io -o k3s-install.sh
+          cat > exec_k3s_all.sh <<EOF
+            install k3s /usr/local/bin/k3s
+            mkdir -pv /var/lib/rancher/k3s/agent/images/
+            gzip -d ./k3s-airgap-images-amd64.tar.gz
+            mv ./k3s-airgap-images-amd64.tar /var/lib/rancher/k3s/agent/images/
+          EOF
+          cat > copy_k3s.sh <<EOF
+            for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+            do
+              rsync -avz --partial --progress --inplace /root/k3s-airgap-images-amd64.tar.gz root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/k3s root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/k3s-install.sh root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/exec_k3s_all.sh root@\$i:/root/
+            done
+          EOF
 
-      #     cat k0sctl.yaml
-      #     yq eval '
-      #       .spec.hosts |= map(
-      #         select(.role == "worker") |=
-      #           . +
-      #           {
-      #             "uploadBinary": true,
-      #             "files": [
-      #               {
-      #                 "src": "/root/image-bundle.tar",
-      #                 "dstDir": "/var/lib/k0s/images",
-      #                 "perm": "0755"
-      #               }
-      #             ]
-      #           }
-      #       )
-      #     ' -i k0sctl.yaml
-      #     # 增加k0s.version
-      #     yq eval '
-      #       .spec.k0s.version = "${{ env.K0S_VERSION }}"
-      #     ' -i k0sctl.yaml
-      #     # 增加路径， 不然会用家目录下的.cache或者从公网下载
-      #     yq eval '.spec.hosts[0].k0sBinaryPath = "/usr/local/bin/k0s"' -i k0sctl.yaml
+      - name: Copy images from runner to pve
+        run: |
+          for pkg in /tmp/k3s-airgap-images-amd64.tar.gz /tmp/k3s /tmp/k3s-install.sh /tmp/copy_k3s.sh /tmp/exec_k3s_all.sh
+          do
+            rsync -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
 
-      #     cat k0sctl.yaml
-
-      #     cat > copy_k0s.sh <<EOF
-      #       for i in $CIDR.11 $CIDR.101 $CIDR.102
-      #       do
-      #         rsync -avz --partial --progress --inplace /usr/local/bin/k0s root@\$i:/usr/local/bin/k0s
-      #       done
-      #     EOF
-
-      #     # Copy to remote
-      #     for pkg in /tmp/k0sctl /tmp/k0s /tmp/image-bundle.tar k0sctl.yaml copy_k0s.sh
-      #     do
-      #       rsync -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-      #       # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-      #     done
+      - name: Copy images from pve to target vm
+        run: |
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd"
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo exec script; bash copy_k3s.sh"
 
 
-
-      # - name: Setup k0s cluster via k0sctl.yaml
-      #   run: |
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd;ls"
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
-      #     # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@10.10.10.11:/usr/local/bin/k0s"
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash copy_k0s.sh"
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "k0sctl apply --config k0sctl.yaml"
-
-      # - name: get kubeconfig
-      #   run: |
-      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "mkdir ~/.kube;  k0sctl kubeconfig > ~/.kube/k0s.kubeconfig "
+      # - name: setup k3s master   
+      # - name: setup k3s node   
