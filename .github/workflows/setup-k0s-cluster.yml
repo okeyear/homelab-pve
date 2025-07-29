@@ -12,6 +12,9 @@ env:
   TAILSCALE_NET: taile80cb.ts.net
   # VM_TEMPLATE_ID: 2009 # vm模板的ID
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+  MASTER_IP: 10.10.10.11
+  NODE01_IP: 10.10.10.101
+  NODE02_IP: 10.10.10.102  
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -117,8 +120,8 @@ jobs:
       - name: prepare k0sctl.yaml
         # if: steps.ache-airgap-images.outputs.cache-hit != 'true'
         run: |
-          CIDR='10.10.10'
-          k0sctl init $CIDR.11 $CIDR.101 $CIDR.102  > k0sctl.yaml
+          # CIDR='10.10.10'
+          k0sctl init ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}  > k0sctl.yaml
           sed -i '/keyPath/s/null/\/root\/.ssh\/id_rsa/' k0sctl.yaml
 
           cat k0sctl.yaml
@@ -148,7 +151,7 @@ jobs:
           cat k0sctl.yaml
 
           cat > copy_k0s.sh <<EOF
-            for i in $CIDR.11 $CIDR.101 $CIDR.102
+            for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
             do
               rsync -avz --partial --progress --inplace /usr/local/bin/k0s root@\$i:/usr/local/bin/k0s
             done
@@ -168,7 +171,7 @@ jobs:
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd;ls"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
-          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@10.10.10.11:/usr/local/bin/k0s"
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@${{ env.MASTER_IP }}:/usr/local/bin/k0s"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash copy_k0s.sh"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "k0sctl apply --config k0sctl.yaml"
 
