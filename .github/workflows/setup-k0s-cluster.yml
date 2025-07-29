@@ -168,11 +168,11 @@ jobs:
 
       - name: Setup k0s cluster via k0sctl.yaml
         run: |
-          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd;ls"
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@${{ env.MASTER_IP }}:/usr/local/bin/k0s"
-          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash copy_k0s.sh"
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo exec script; bash copy_k0s.sh"
           ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "k0sctl apply --config k0sctl.yaml"
 
       - name: get kubeconfig
