@@ -98,6 +98,7 @@ jobs:
           cat > copy_k3s.sh <<EOF
             for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
             do
+              ssh-keyscan -H $i >> ~/.ssh/known_hosts
               rsync -avz --partial --progress --inplace /root/k3s-airgap-images-amd64.tar.gz root@\$i:/root/
               rsync -avz --partial --progress --inplace /root/k3s root@\$i:/root/
               rsync -avz --partial --progress --inplace /root/k3s-install.sh root@\$i:/root/
