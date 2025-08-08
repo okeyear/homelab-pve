@@ -1,0 +1,28 @@
+name: Kind-CI
+
+on:
+  # push:
+  # pull_request:
+  workflow_dispatch:
+
+jobs:
+  kind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 启动单节点 Kind 集群
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1.8.0   # 官方维护，已验证
+        with:
+          cluster_name: ci-test
+
+      # 2. 验证集群
+      - run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      # 3. 部署示例
+      # - run: |
+      #     kubectl apply -f k8s/
+      #     kubectl rollout status deploy/my-app

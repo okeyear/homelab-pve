@@ -1,0 +1,64 @@
+name: "Setup PVE VMs template"
+
+on:
+  workflow_dispatch:
+    inputs:
+      OS:
+        description: 'OS Version'
+        required: true
+        default: 'ubuntu2404'
+        type: choice      
+        options:
+          - ubuntu2404
+          - ubuntu2204
+          - debian12
+          - almalinux9
+          - almalinux8
+          - centos7
+          - centos9stream
+          - alinux3
+          - openEuler2403
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  # VM_TEMPLATE_ID: 2009 # vm模板的ID
+  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: Tailscale Connect
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # 2️⃣  正常通过 100.x 或主机名访问远程机
+      - name: Remote command via SSH
+        run: |
+          # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+          # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+          # tailscale status
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+
+      - name: Setup ubuntu2404 template
+        if: github.event.inputs.OS == 'ubuntu2404'
+        run: |
+          echo setup ubuntu2404 template

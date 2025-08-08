@@ -1,0 +1,136 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "Setup kubeadm-ha cluster"
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: self-hosted
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+      ip_list:
+        description: 'VMs IP List'
+        required: true
+        default: '10.10.10.11,10.10.10.101,10.10.10.102'
+        type: string
+      k8s_version:
+        description: 'k8s version'
+        required: true
+        default: '1.30'
+        type: string
+
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  VM_TEMPLATE_ID: 2009 # vm模板的ID
+  SSH_KEY: ${{ secrets.VM_ID_RSA }}
+  # MASTER_IP: 10.10.10.11
+  # NODE01_IP: 10.10.10.101
+  # NODE02_IP: 10.10.10.102
+  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    # The type of runner that the job will run on
+    runs-on: ${{ github.event.inputs.runner }}
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+
+      - name: Install tools
+        run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
+
+      - name: Check if already ssh key-based
+        id: check-ssh
+        run: |
+          set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # - uses: actions/checkout@v4
+      
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # 2️⃣  正常通过 100.x 或主机名访问远程机
+      - name: Remote command via SSH
+        run: |
+          # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+          # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+          # tailscale status
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+
+      - name: install ansible
+        run: |
+          type ansible >/dev/null 2>&1 && ansible --version || sudo apt install -yq ansible
+
+      - name: clone kubeadm-ha git repo
+        run: |
+          [ -d kubeadm-ha ] && rm -rf kubeadm-ha
+          git clone -b release-${{ github.event.inputs.k8s_version }} https://github.com/TimeBye/kubeadm-ha.git
+          cd kubeadm-ha
+          # cat example/hosts.s-master.hostname.ini
+
+          # for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+          ips=${{ github.event.inputs.ip_list }}
+          arr=(${ips//,/ })
+          for i in ${arr[*]}
+          do
+            echo $i
+          done
+
+          sed -i /node4/d example/hosts.s-master.hostname.ini
+          # sed -i 's@ansible_user="vagrant"@ansible_user="root"@g' example/hosts.s-master.hostname.ini
+          sed -i s/192.168.56.11/${arr[0]}/g example/hosts.s-master.hostname.ini
+          sed -i s/192.168.56.12/${arr[1]}/g example/hosts.s-master.hostname.ini
+          sed -i s/192.168.56.13/${arr[2]}/g example/hosts.s-master.hostname.ini
+          cat example/hosts.s-master.hostname.ini
+          cd ..
+          # git branch -v
+
+          # 把本地脚本复制过去并立即执行
+          # cat myscript.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+          # rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace kubeadm-ha root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          # tar czf - kubeadm-ha | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "tar xzf - -C /root/"
+          tar -zcf kubeadm-ha.tar.gz kubeadm-ha
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace kubeadm-ha.tar.gz root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'tar -zxf kubeadm-ha.tar.gz'
+
+
+      - name: Setup k8s cluster via ansible
+        run: |
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          echo ansible-playbook -i example/hosts.s-master.hostname.ini 90-init-cluster.yml
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd;cd kubeadm-ha; ansible-playbook -i example/hosts.s-master.hostname.ini 90-init-cluster.yml"
+
+    

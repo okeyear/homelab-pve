@@ -1,0 +1,132 @@
+name: "Setup k3s cluster"
+# This is a basic workflow to help you get started with Actions
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+          
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  MASTER_IP: 10.10.10.11
+  NODE01_IP: 10.10.10.101
+  NODE02_IP: 10.10.10.102  
+  # K3S_VERSION: ${{ secrets.K3S_VERSION }}
+  INSTALL_DIR: /tmp/k3s-install
+  SSH_OPTS: >
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -i ${{ github.workspace }}/.ssh/id_rsa
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: Tailscale Connect
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      - name: set tailscale ssh
+        run: |
+          # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+          # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+          # tailscale status
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          echo ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+          ip -o -4 a 
+          cat /etc/os-release
+          for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+          do
+            ping -c 1 $i
+          done
+
+
+
+
+      - name: get k3s latest version
+        run: |
+          function get_github_latest_release() {
+            curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+                grep '"tag_name":' |                                          # Get tag line
+                sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
+          }
+
+          #
+          VERSION=$(get_github_latest_release k3s-io/k3s)
+          echo "K3S_VERSION=${VERSION}" >> $GITHUB_ENV
+
+
+      - name: Cache k3s images
+        id:   cache-k3s-images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/k3s-airgap-images-amd64.tar.gz
+          key: k3s-${{ env.K3S_VERSION }}-linux-amd64
+
+      - name: Download k3s images (if cache miss)
+        if: steps.cache-k3s-images.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          wget -q "https://github.com/k3s-io/k3s/releases/download/${{ env.K3S_VERSION }}/k3s-airgap-images-amd64.tar.gz"
+          wget -q "https://github.com/k3s-io/k3s/releases/download/${{ env.K3S_VERSION }}/k3s"
+          curl https://get.k3s.io -o k3s-install.sh
+          cat > exec_k3s_all.sh <<EOF
+            install k3s /usr/local/bin/k3s
+            mkdir -pv /var/lib/rancher/k3s/agent/images/
+            gzip -d ./k3s-airgap-images-amd64.tar.gz
+            mv ./k3s-airgap-images-amd64.tar /var/lib/rancher/k3s/agent/images/
+          EOF
+          cat > copy_k3s.sh <<EOF
+            for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+            do
+              ssh-keyscan -H $i >> ~/.ssh/known_hosts
+              rsync -avz --partial --progress --inplace /root/k3s-airgap-images-amd64.tar.gz root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/k3s root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/k3s-install.sh root@\$i:/root/
+              rsync -avz --partial --progress --inplace /root/exec_k3s_all.sh root@\$i:/root/
+            done
+          EOF
+
+      - name: Copy images from runner to pve
+        run: |
+          for pkg in /tmp/k3s-airgap-images-amd64.tar.gz /tmp/k3s /tmp/k3s-install.sh /tmp/copy_k3s.sh /tmp/exec_k3s_all.sh
+          do
+            rsync -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+      - name: Copy images from pve to target vm
+        run: |
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd"
+          ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo exec script; bash copy_k3s.sh"
+
+
+      # - name: setup k3s master   
+      # - name: setup k3s node   
