@@ -127,7 +127,7 @@ jobs:
             sleep 2
             qm destroy ${VM_ID}-purge
             qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID
-            qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 84 || echo 2) \
+            qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 4 || echo 2) \
                       --memory $(test $VM_ID -ge 10000 && echo 8192 || echo 4096) --name ${{ env.VM_PREFIX }}node${VM_ID}
             qm set $VM_ID --ipconfig0 ip=${{ env.CIDR }}.${i}/24,gw=${{ env.CIDR }}.1  # 设置ip
             qm set $VM_ID --cipassword vagrant --ciuser ${{ env.VM_USER }} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
