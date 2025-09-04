@@ -43,12 +43,12 @@ on:
           - vagrant
           - root
 env:
-  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST || "pve" }}
-  TAILSCALE_NET: ${{ vars.TAILSCALE_NET || "taile80cb.ts.net" }}
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
   VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
   # VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
   # VM_USER: ${{ github.event.inputs.vm_user }}
-  # CIDR: ${{ vars.TAILSCALE_HOST || "10.10.10" }}  # vmbr0 vmbr1 的网段
+  # CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
 
   # MASTER_IP: 10.10.10.11
   # NODE01_IP: 10.10.10.101
@@ -114,7 +114,7 @@ jobs:
           ips=${{ github.event.inputs.ip_list }}
           arr=(${ips//,/ })
 
-          CIDR=${{ vars.TAILSCALE_HOST }}
+          CIDR=${{ vars.CIDR }}
           VM_PREFIX=${{ github.event.inputs.vm_prefix }}
 
           for i in ${arr[*]}
@@ -124,9 +124,9 @@ jobs:
             # CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
             echo CIDR $CIDR
             pct destroy ${VM_ID} --force
-            qm shutdown $VM_ID -forceStop
+            qm shutdown ${VM_ID}-forceStop
             sleep 2
-            qm destroy $VM_ID -purge
+            qm destroy ${VM_ID}-purge
             qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID
             VM_USER=${{ github.event.inputs.vm_user }}
             qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 8 || echo 4) \
