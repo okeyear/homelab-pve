@@ -112,7 +112,7 @@ jobs:
           # cat setup_almalinux.sh
 
       - name: Setup AlmaLinux 9
-        if: contains(github.event.inputs.OS, 'almalinux')
+        if: contains(github.event.inputs.OS, 'almalinux9')
         run: |
           echo setup AlmaLinux 9 ...
           VM_ID=2009
