@@ -167,5 +167,5 @@ jobs:
           done
 
           # exec scripts on PVE
-          # ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          # root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux9.sh"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux9.sh"
