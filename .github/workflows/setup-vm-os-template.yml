@@ -83,7 +83,7 @@ jobs:
           cat > setup_almalinux.sh <<'EOF'
           sudo  sed -i '/^PasswordAuth/s/no/yes/' /etc/ssh/sshd_config
           echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
-          sudo  service sshd restart
+          sudo  systemctl restart sshd
 
           # sudo  systemctl disable --now firewalld
           sudo  sed -i 's|SELINUX=enforcing|SELINUX=disabled|' /etc/selinux/config
