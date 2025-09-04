@@ -157,7 +157,7 @@ jobs:
           cat setup_almalinux.sh | ssh vagrant@${CIDR}.250 'bash -s'
           EOF
 
-          cat setup_almalinux9.sh
+          # cat setup_almalinux9.sh
 
           # copy scripts to PVE
           for pkg in setup_almalinux*.sh
