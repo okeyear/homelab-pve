@@ -83,9 +83,10 @@ jobs:
           echo setup AlmaLinux script ...
           cat > setup_almalinux.sh <<'EOF'
           sudo  sed -i '/^PasswordAuth/s/no/yes/' /etc/ssh/sshd_config
+          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
           sudo  service sshd restart
 
-          sudo  systemctl disable --now firewalld
+          # sudo  systemctl disable --now firewalld
           sudo  sed -i 's|SELINUX=enforcing|SELINUX=disabled|' /etc/selinux/config
 
           sudo  sed -e 's|^mirrorlist=|#mirrorlist=|g' \
@@ -147,7 +148,7 @@ jobs:
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
           qm start $VM_ID
-          sleep 15
+          sleep 30
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
