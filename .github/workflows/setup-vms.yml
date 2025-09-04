@@ -140,7 +140,8 @@ jobs:
           cat setup_vms.sh
 
           # 把本地脚本复制过去并立即执行
-          cat setup_vms.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+          alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          cat setup_vms.sh | ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
 
 
 
