@@ -69,7 +69,6 @@ jobs:
           test -d ~/.ssh || mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
-
           # sudo apt install -yq cloud-image-utils
 
       - name: Setup ubuntu2404 template
