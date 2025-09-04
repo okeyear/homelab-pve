@@ -107,6 +107,8 @@ jobs:
 
           sudo yum update -y
           sudo yum clean all
+          sudo history -c
+          sudo init 0
           EOF
 
           # cat setup_almalinux.sh
