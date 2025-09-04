@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "00. Prepare VMs"
+name: "00. Setup VMs"
 
 # Controls when the workflow will run
 on:
@@ -8,27 +8,51 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Runner Agent'
+        description: 'Github Action Runner Agent'
         required: true
-        default: self-hosted
+        default: ubuntu-latest
         type: choice
         options:
           - self-hosted
           - ubuntu-latest
+
+      vm_prefix:
+        description: 'VM Name Prefix'
+        required: true
+        default: 'k8s-'
+        type: string
+
+      vm_template_id:
+        description: 'VM Template ID'
+        required: true
+        default: 2009
+        type: string
+
       ip_list:
         description: 'VMs IP List'
         required: true
-        default: '10.10.10.11,10.10.10.101,10.10.10.102'
+        default: '11,101,102'
         type: string
 
+      vm_user:
+        description: 'VM Guest OS Username'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root
 env:
-  TAILSCALE_HOST: pve
-  TAILSCALE_NET: taile80cb.ts.net
-  VM_TEMPLATE_ID: 2009 # vm模板的ID
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST || "pve" }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET || "taile80cb.ts.net" }}
+  VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
+  # VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
+  # VM_USER: ${{ github.event.inputs.vm_user }}
+  # CIDR: ${{ vars.TAILSCALE_HOST || "10.10.10" }}  # vmbr0 vmbr1 的网段
+
   # MASTER_IP: 10.10.10.11
   # NODE01_IP: 10.10.10.101
   # NODE02_IP: 10.10.10.102
-  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -89,23 +113,28 @@ jobs:
           # for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
           ips=${{ github.event.inputs.ip_list }}
           arr=(${ips//,/ })
+
+          CIDR=${{ vars.TAILSCALE_HOST }}
+          VM_PREFIX=${{ github.event.inputs.vm_prefix }}
+
           for i in ${arr[*]}
           do
             VM_ID=10${i##*.}
             echo VM_ID $VM_ID
-            CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
+            # CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
             echo CIDR $CIDR
             pct destroy ${VM_ID} --force
             qm shutdown $VM_ID -forceStop
             sleep 2
             qm destroy $VM_ID -purge
             qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID
+            VM_USER=${{ github.event.inputs.vm_user }}
             qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 8 || echo 4) \
-                      --memory $(test $VM_ID -ge 10000 && echo 12288 || echo 8192) --name node-${VM_ID}
-            qm set $VM_ID --ipconfig0 ip=${i}/24,gw=${CIDR}.1  # 设置ip
-            qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+                      --memory $(test $VM_ID -ge 10000 && echo 12288 || echo 8192) --name ${VM_PREFIX}node${VM_ID}
+            qm set $VM_ID --ipconfig0 ip=${CIDR}.${i}/24,gw=${CIDR}.1  # 设置ip
+            qm set $VM_ID --cipassword vagrant --ciuser ${VM_USER} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
             ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${i}"
-            qm disk resize $VM_ID scsi0 100G # 设置硬盘
+            qm disk resize $VM_ID scsi0 80G # 设置硬盘
             qm start $VM_ID
           done
           EOF
