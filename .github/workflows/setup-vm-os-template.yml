@@ -172,4 +172,4 @@ jobs:
 
           # exec scripts on PVE
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux9.sh"
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux9.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
