@@ -123,6 +123,10 @@ jobs:
           # wget -c https://mirrors.cloud.tencent.com/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
 
           VM_ID=$VM_ID
+          qm shutdown ${VM_ID} --forceStop
+          sleep 2
+          qm destroy ${VM_ID} --purge
+
           qm create $VM_ID --core 2 --memory 4096 --name almalinux9tpl --net0 virtio,bridge=vmbr1
           qm importdisk $VM_ID AlmaLinux-9-GenericCloud-latest.x86_64.qcow2 ${STORAGE}
           # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
