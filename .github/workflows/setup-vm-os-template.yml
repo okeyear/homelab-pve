@@ -157,8 +157,8 @@ jobs:
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
           # 将脚本内容作为命令执行
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_almalinux.sh)"
-          alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          cat setup_almalinux.sh | ssh vagrant@${CIDR}.250 'bash -s'
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
           EOF
 
           # cat setup_almalinux9.sh
