@@ -1,4 +1,4 @@
-name: "Setup PVE VMs template"
+name: "[ 00 ] Setup PVE VMs template"
 
 on:
   workflow_dispatch:
@@ -19,10 +19,9 @@ on:
           - alinux3
           - openEuler2403
 env:
-  TAILSCALE_HOST: pve
-  TAILSCALE_NET: taile80cb.ts.net
-  # VM_TEMPLATE_ID: 2009 # vm模板的ID
-  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
+  CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
