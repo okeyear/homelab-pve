@@ -123,7 +123,7 @@ jobs:
             # CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
             echo CIDR ${{ env.VM_USER }}
             pct destroy ${VM_ID} --force
-            qm shutdown ${VM_ID}-forceStop
+            qm shutdown ${VM_ID} -forceStop
             sleep 2
             qm destroy ${VM_ID}-purge
             qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID
