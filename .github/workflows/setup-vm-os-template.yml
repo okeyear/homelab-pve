@@ -9,8 +9,8 @@ on:
         default: 'almalinux9'
         type: choice      
         options:
-          - ubuntu2404
-          - ubuntu2204
+          - ubuntu24.04
+          - ubuntu22.04
           - debian12
           - almalinux9
           - almalinux8
@@ -76,19 +76,24 @@ jobs:
         if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
           echo setup ubuntu script ...
+          version=$(echo ${{ github.event.inputs.OS }} | sed 's@ubuntu@@')
+          vmid=VM_ID=${version/./}
+          echo "ubuntu_ver=$version"      >> "$GITHUB_ENV"
+          echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
+
           cat > setup_ubuntu.sh <<'EOF'
           source /etc/os-release
           # echo ${VERSION_CODENAME} ${UBUNTU_CODENAME}
           sudo  sed -i '/^PasswordAuth/s/no/yes/' /etc/ssh/sshd_config
           echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
           sudo mv /etc/apt/sources.list{,.bak.init}
-          sudo tee /etc/apt/sources.list <<EOF
+          sudo tee /etc/apt/sources.list <<ENDIF
           # 默认注释了源码镜像以提高 apt update 速度，如有需要可自行取消注释
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
-          EOF
+          ENDIF
 
           # kvm agent
           sudo apt update
@@ -100,18 +105,17 @@ jobs:
           # 修改 让本地hosts生效
           sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg
 
-          apt-get clean && \
-              rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
           EOF
 
-      - name: Setup Ubuntu22.04 Template
-        if: github.event.inputs.OS == 'ubuntu2204'
-        # if: contains(github.event.inputs.OS, 'ubuntu')
+      - name: Setup ${{ github.event.inputs.OS }} Template
+        # if: github.event.inputs.OS == 'ubuntu2204'
+        if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
-          echo setup Ubuntu22.04 ...
-          ubuntu_ver='22.04' # 20.04
-          VM_ID=${ubuntu_ver/./}
-          cat > setup_ubuntu2204.sh <<EOF
+          echo setup ${{ github.event.inputs.OS }} ...
+          # ubuntu_ver='22.04' # 20.04
+          # VM_ID=${ubuntu_ver/./}
+          cat > setup_ubuntu_tpl.sh <<EOF
           # 1. download cloud image
           # wget http://cloud-images.ubuntu.com/releases/focal/release/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img
           wget -c https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
@@ -173,7 +177,7 @@ jobs:
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'     
           EOF
-          # cat setup_ubuntu2204.sh
+          # cat setup_ubuntu_tpl.sh
 
           # copy scripts to PVE
           for pkg in setup_ubuntu*.sh
@@ -184,13 +188,7 @@ jobs:
 
           # exec scripts on PVE
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu2204.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
-
-      - name: Setup Ubuntu24.04 Template
-        if: github.event.inputs.OS == 'ubuntu2404'
-        # if: contains(github.event.inputs.OS, 'ubuntu')
-        run: |
-          echo setup Ubuntu24.04 ...
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
 
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
