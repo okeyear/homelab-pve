@@ -109,6 +109,82 @@ jobs:
         # if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
           echo setup Ubuntu22.04 ...
+          ubuntu_ver='22.04' # 20.04
+          VM_ID=${ubuntu_ver/./}
+          cat > setup_ubuntu2204.sh <<EOF
+          # 1. download cloud image
+          # wget http://cloud-images.ubuntu.com/releases/focal/release/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img
+          wget -c https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+
+          # 磁盘默认2.2G, 设置为20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          qemu-img resize ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img 20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+
+          # 2. create vm
+          # 创建 id 为 1000 的虚拟机，内存大小为 2G ， CPU 核心数量 2，名称是 ubuntu22.04-template 并设置网卡桥接到 vmbr0
+          qm create $VM_ID --core 2 --memory 4096 --name ubuntu${ubuntu_ver/./}tpl --net0 virtio,bridge=vmbr1
+
+          # 3. 导入下载好的云镜像到 local-lvm 存储; 如果没有额外存储，则默认是local
+          qm importdisk $VM_ID ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img  ${STORAGE}
+
+          # 转换云镜像为虚拟磁盘
+          # qm importdisk $VM_ID ubuntu-20.04-server-cloudimg-amd64.img raid0 --format=qcow2
+          # 104 为虚拟机的ID
+          # raid0 为存储的名称，如果没有额外存储，则默认是local
+          # --format=qcow2 为转换后的格式
+
+          # 4. 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local
+          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+
+
+          # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
+          qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+
+          # 5. 添加 cloud init 驱动器
+          # The next step is to configure a CDROM drive which will be used to pass the Cloud-Init data to the VM.
+          qm set $VM_ID --ide2  ${STORAGE}:cloudinit
+
+          # 6. 将 cloud init 驱动器设置为可启动并限制 BIOS 仅从磁盘启动
+          # To be able to boot directly from the Cloud-Init image, set the bootdisk parameter to scsi0, and restrict BIOS to boot from disk only. This will speed up booting, because VM BIOS skips the testing for a bootable CDROM. 
+          # --boot cdn //启动顺序。cdrom  disk network 
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+
+          # 7. 添加串口控制台
+          # Also configure a serial console and use it as a display. Many Cloud-Init images rely on this, as it is an requirement for OpenStack images.
+          qm set $VM_ID --serial0 socket --vga serial0
+
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser root # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
+          qm start $VM_ID
+          sleep 30
+
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'     
+          EOF
+          # cat setup_ubuntu2204.sh
+
+          # copy scripts to PVE
+          for pkg in setup_ubuntu*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu2204.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
 
       - name: Setup Ubuntu24.04 Template
         if: github.event.inputs.OS == 'ubuntu2404'
@@ -179,7 +255,7 @@ jobs:
           qm set $VM_ID --ide2 ${STORAGE}:cloudinit
           qm set $VM_ID --boot cdn --bootdisk scsi0
           qm set $VM_ID --serial0 socket --vga serial0
-
+          qm set $VM_ID --tags "template;almalinux"
           # 设置磁盘
           qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
 
@@ -240,7 +316,7 @@ jobs:
           qm set $VM_ID --ide2 ${STORAGE}:cloudinit
           qm set $VM_ID --boot cdn --bootdisk scsi0
           qm set $VM_ID --serial0 socket --vga serial0
-
+          qm set $VM_ID --tags "template;almalinux"
           # 设置磁盘
           qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
 
