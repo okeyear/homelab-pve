@@ -71,10 +71,50 @@ jobs:
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
           # sudo apt install -yq cloud-image-utils
 
-      - name: Setup ubuntu2404 template
-        if: github.event.inputs.OS == 'ubuntu2404'
+      - name: Setup Ubuntu script
+        # if: github.event.inputs.OS == 'ubuntu2404'
+        if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
-          echo setup ubuntu2404 template
+          echo setup ubuntu script ...
+          cat > setup_ubuntu.sh <<'EOF'
+          source /etc/os-release
+          # echo ${VERSION_CODENAME} ${UBUNTU_CODENAME}
+          sudo  sed -i '/^PasswordAuth/s/no/yes/' /etc/ssh/sshd_config
+          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
+          sudo mv /etc/apt/sources.list{,.bak.init}
+          sudo tee /etc/apt/sources.list <<EOF
+          # 默认注释了源码镜像以提高 apt update 速度，如有需要可自行取消注释
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
+          EOF
+
+          # kvm agent
+          sudo apt update
+          sudo apt upgrade -y
+          sudo apt install -y vim wget telnet qemu-guest-agent
+          sudo apt clean
+          # 升级kernel 参考其他部分
+
+          # 修改 让本地hosts生效
+          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg
+
+          apt-get clean && \
+              rm -rf /var/lib/apt/lists/*
+          EOF
+
+      - name: Setup Ubuntu22.04 Template
+        if: github.event.inputs.OS == 'ubuntu2204'
+        # if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          echo setup Ubuntu22.04 ...
+
+      - name: Setup Ubuntu24.04 Template
+        if: github.event.inputs.OS == 'ubuntu2404'
+        # if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          echo setup Ubuntu24.04 ...
 
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
@@ -169,9 +209,67 @@ jobs:
           for pkg in setup_almalinux*.sh
           do
             rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-            -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           done
 
           # exec scripts on PVE
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
           root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux9.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
+
+      - name: Setup AlmaLinux 8
+        if: contains(github.event.inputs.OS, 'almalinux8')
+        run: |
+          echo setup AlmaLinux 8 ...
+          VM_ID=2008
+          cat > setup_almalinux8.sh <<EOF
+          # wget -c https://repo.almalinux.org/almalinux/8/cloud/x86_64/images/AlmaLinux-8-GenericCloud-latest.x86_64.qcow2
+          wget -c https://mirrors.aliyun.com/almalinux/8/cloud/x86_64/images/AlmaLinux-8-GenericCloud-latest.x86_64.qcow2
+          VM_ID=$VM_ID
+          qm shutdown ${VM_ID} --forceStop
+          sleep 2
+          qm destroy ${VM_ID} --purge
+
+          qm create $VM_ID --core 2 --memory 4096 --name almalinux8tpl --net0 virtio,bridge=vmbr1
+          qm importdisk $VM_ID AlmaLinux-8-GenericCloud-latest.x86_64.qcow2 ${STORAGE}
+          # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+
+          qm set $VM_ID --ide2 ${STORAGE}:cloudinit
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+          qm set $VM_ID --serial0 socket --vga serial0
+
+          # 设置磁盘
+          qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+          qm start $VM_ID
+          sleep 30
+
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_almalinux.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
+          EOF
+
+          # cat setup_almalinux8.sh
+
+          # copy scripts to PVE
+          for pkg in setup_almalinux*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux8.sh; sleep 5; qm stop $VM_ID; sleep 5; qm template $VM_ID"
