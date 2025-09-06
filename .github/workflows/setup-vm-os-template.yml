@@ -175,9 +175,9 @@ jobs:
           # 将脚本内容作为命令执行
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'     
+          cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'     
           EOF
-          # cat setup_ubuntu_tpl.sh
+          cat setup_ubuntu_tpl.sh
 
           # copy scripts to PVE
           for pkg in setup_ubuntu*.sh
@@ -282,7 +282,7 @@ jobs:
           cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
           EOF
 
-          # cat setup_almalinux_tpl.sh
+          cat setup_almalinux_tpl.sh
 
           # copy scripts to PVE
           for pkg in setup_almalinux*.sh
