@@ -252,8 +252,11 @@ jobs:
           # VM_ID=2009
           cat > setup_almalinux_tpl.sh <<EOF
           # wget -c https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
-          wget -c https://mirrors.aliyun.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          wget -c https://repo.almalinux.org/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          # wget -c https://mirrors.aliyun.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
           # wget -c https://mirrors.cloud.tencent.com/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          # wget -c https://mirrors.cloud.tencent.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          
 
           VM_ID=$VM_ID
           qm shutdown ${VM_ID} --forceStop

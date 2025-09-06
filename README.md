@@ -20,7 +20,7 @@ CIDR='10.10.10'
 # 21010: CentOS Stream 10
 
 # 2112: Debian 12
-# 2112: Debian 13
+# 2113: Debian 13
 
 # 2204: Ubuntu 2204
 # 2403: openEuler-24.03
