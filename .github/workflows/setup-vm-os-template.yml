@@ -108,7 +108,7 @@ jobs:
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
           EOF
 
-      - name: Setup ${{ github.event.inputs.OS }} Template
+      - name: Setup Ubuntu ${{ github.event.inputs.OS }} Template
         # if: github.event.inputs.OS == 'ubuntu2204'
         if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
@@ -231,7 +231,7 @@ jobs:
 
           # cat setup_almalinux.sh
 
-      - name: Setup ${{ github.event.inputs.OS }} Template
+      - name: Setup AlmaLinux ${{ github.event.inputs.OS }} Template
         if: contains(github.event.inputs.OS, 'almalinux')
         # if: contains(github.event.inputs.OS, 'almalinux9')
         run: |
