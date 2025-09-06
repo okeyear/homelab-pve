@@ -165,7 +165,7 @@ jobs:
           qm set $VM_ID --tags "template;ubuntu"
 
           # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
-          qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
           # 5. 添加 cloud init 驱动器
           # The next step is to configure a CDROM drive which will be used to pass the Cloud-Init data to the VM.
@@ -288,7 +288,7 @@ jobs:
           qm set $VM_ID --serial0 socket --vga serial0
           qm set $VM_ID --tags "template;almalinux"
           # 设置磁盘
-          qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
           # el9需要设置CPU为host
           [ "${almalinux_ver}" -eq "9" ] && qm set $VM_ID --cpu cputype=host
