@@ -104,7 +104,7 @@ jobs:
           ENDIF
           sleep 2
           # kvm agent
-          sudo apt update -y 
+          sudo apt update -y
           sudo apt install -yq vim wget telnet qemu-guest-agent
           sleep 2
           # 升级kernel 参考其他部分
@@ -116,7 +116,7 @@ jobs:
           # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
           sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
           
-          sudo apt upgrade -y
+          sudo apt upgrade -yq
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
           history -c
           sudo init 0
