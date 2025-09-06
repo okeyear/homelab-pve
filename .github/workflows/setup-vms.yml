@@ -163,7 +163,7 @@ jobs:
             qm set $VM_ID --ipconfig0 ip=${{ env.CIDR }}.${i}/24,gw=${{ env.CIDR }}.1  # 设置ip
             qm set $VM_ID --cipassword vagrant --ciuser ${{ env.VM_USER }} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
             ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${{ env.CIDR }}.${i}"
-            qm disk resize $VM_ID scsi0 60G # 设置硬盘
+            qm disk resize $VM_ID scsi0 40G # 设置硬盘
             qm start $VM_ID
           done
           EOF
