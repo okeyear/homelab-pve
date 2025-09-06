@@ -162,7 +162,7 @@ jobs:
           qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
           # 适用于local
           # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
-          qm set $VM_ID --tags "template;ubuntu"
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
 
           # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
           qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
@@ -287,7 +287,7 @@ jobs:
           qm set $VM_ID --ide2 ${STORAGE}:cloudinit
           qm set $VM_ID --boot cdn --bootdisk scsi0
           qm set $VM_ID --serial0 socket --vga serial0
-          qm set $VM_ID --tags "template;almalinux"
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
           # 设置磁盘
           qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
