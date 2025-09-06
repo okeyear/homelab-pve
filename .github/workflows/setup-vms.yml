@@ -22,14 +22,23 @@ on:
         default: 'k8s-'
         type: string
 
-      vm_template_id:
-        description: 'VM Template ID: 2009 for Alma, 2204 for ubuntu'
+      vm_template:
+        description: 'VM Clone from Template'
         required: true
-        default: 2009
+        default: almalinux9
         type: choice
         options:
-          - 2009
-          - 2204
+          - ubuntu24.04
+          - ubuntu22.04
+          - debian13
+          - debian12
+          - almalinux10
+          - almalinux9
+          - almalinux8
+          - centos7
+          - centos9stream
+          - alinux3
+          - openEuler2403
 
       ip_list:
         description: 'VMs IP List'
@@ -48,7 +57,7 @@ on:
 env:
   TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
   TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
-  VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
+  # VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
   VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
   VM_USER: ${{ github.event.inputs.vm_user }}
   CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
@@ -70,6 +79,28 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Get VM Template ID
+        run: |
+          cat > versions.txt <<'EOF'
+          2003 alinux3
+          2007 centos7
+          2008 almalinux8
+          2009 almalinux9
+          20010 almalinux10
+
+          2109 centos9stream
+          21010 centos10stream
+
+          2112 debian12
+          2113 debian13
+
+          2204 ubuntu22.04
+          2403 openEuler2403
+          2404 ubuntu24.04
+          2604 ubuntu26.04
+          EOF
+          temp_id=$(grep "\s${{ github.event.inputs.vm_template }}$" versions.txt | awk '{print $1}')
+          echo "VM_TEMPLATE_ID=$temp_id"      >> "$GITHUB_ENV"
 
       - name: Install tools
         run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
