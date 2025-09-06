@@ -110,7 +110,12 @@ jobs:
           sleep 2
           # 升级kernel 参考其他部分
           # 修改 让本地hosts生效
-          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg
+          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
+          echo 'apt_preserve_sources_list: true' | sudo tee -a /etc/cloud/cloud.cfg.d/99-disable-apt-overwrite.cfg
+
+          # 开启sshd的密码验证
+          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
+          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
           history -c
           sudo init 0
@@ -177,7 +182,7 @@ jobs:
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  --ssh-pwauth 1 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
           
@@ -237,8 +242,10 @@ jobs:
 
           # 修改 让本地hosts生效
           sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
+
           # 开启sshd的密码验证
-          sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
+          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
+          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
 
           sudo yum update -y
           sudo yum clean all
@@ -288,7 +295,7 @@ jobs:
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 --ssh-pwauth 1 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
           qm start $VM_ID
