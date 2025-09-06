@@ -189,7 +189,10 @@ jobs:
           # 将脚本内容作为命令执行
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'     
+          # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace setup_ubuntu.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_ubuntu.sh'
           EOF
           cat setup_ubuntu_tpl.sh
 
@@ -296,7 +299,10 @@ jobs:
           # 将脚本内容作为命令执行
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_almalinux.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
+          # cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace setup_almalinux.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_almalinux.sh'          
           EOF
 
           cat setup_almalinux_tpl.sh
