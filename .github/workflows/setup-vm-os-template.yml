@@ -89,6 +89,7 @@ jobs:
           echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
 
           cat > setup_ubuntu.sh <<'EOF'
+          export DEBIAN_FRONTEND=noninteractive
           source /etc/os-release
           # echo ${VERSION_CODENAME} ${UBUNTU_CODENAME}
           sudo  sed -i '/^PasswordAuth/s/no/yes/' /etc/ssh/sshd_config
@@ -105,7 +106,8 @@ jobs:
           # kvm agent
           sudo apt update
           sudo apt upgrade -y
-          sudo apt install -y vim wget telnet qemu-guest-agent
+          sudo apt install -yq vim wget telnet qemu-guest-agent
+          sleep 2
           sudo apt clean
           # 升级kernel 参考其他部分
 
