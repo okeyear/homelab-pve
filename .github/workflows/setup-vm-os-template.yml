@@ -3,6 +3,15 @@ name: "[ 00 ] Setup VM templates"
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'Github Action Runner/Agent'
+        required: true
+        default: self-hosted
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
       OS:
         description: 'OS Version'
         required: true
@@ -44,7 +53,8 @@ jobs:
   setup-template:
     # The type of runner that the job will run on
     # runs-on: [self-hosted]
-    runs-on: ubuntu-latest
+    # runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner }}
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
     # Steps represent a sequence of tasks that will be executed as part of the job
