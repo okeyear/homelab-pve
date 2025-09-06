@@ -164,6 +164,7 @@ jobs:
             qm set $VM_ID --cipassword vagrant --ciuser ${{ env.VM_USER }} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
             ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${{ env.CIDR }}.${i}"
             qm disk resize $VM_ID scsi0 40G # 设置硬盘
+            qm set $VM_ID --delete tags,template
             qm start $VM_ID
           done
           EOF
