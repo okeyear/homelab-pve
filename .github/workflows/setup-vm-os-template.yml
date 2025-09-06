@@ -189,7 +189,18 @@ jobs:
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
           
           qm start $VM_ID
-          sleep 45
+          # sleep 45
+          duration=45  # 默认睡眠10秒
+          interval=1
+          steps=\$((\$duration/\$interval))
+
+          echo -n "Progress: ["
+          for ((i=0; i<=steps; i++)); do
+              sleep \$interval
+              printf "#"
+              echo -n ">"
+          done
+          echo "] Done! Slept for \$duration seconds."
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
