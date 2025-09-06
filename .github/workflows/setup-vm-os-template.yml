@@ -102,9 +102,9 @@ jobs:
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
           deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
           ENDIF
-
+          sleep 2
           # kvm agent
-          sudo apt update
+          sudo apt update -y
           sudo apt upgrade -y
           sudo apt install -yq vim wget telnet qemu-guest-agent
           sleep 2
@@ -112,7 +112,7 @@ jobs:
           # 修改 让本地hosts生效
           sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
-          sudo history -c
+          history -c
           sudo init 0
           EOF
 
@@ -181,7 +181,7 @@ jobs:
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
           qm start $VM_ID
-          sleep 30
+          sleep 40
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
@@ -238,7 +238,7 @@ jobs:
 
           sudo yum update -y
           sudo yum clean all
-          sudo history -c
+          history -c
           sudo init 0
           EOF
 
