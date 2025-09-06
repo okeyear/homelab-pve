@@ -1,6 +1,44 @@
 # homelab-pve
 PVE with Github runner, build HomeLab Environment
 
+## IP和网段
+PVE默认是vmbr0， 新建一个vmbr1,设置为10.10.10.0/24
+
+```shell
+STORAGE='local-zfs'   # 'local-lvm' 'local' 'local-zfs'
+DNS='223.5.5.5'    # '192.168.168.168' # PVE启动了一个coredns,用于加速和缓存
+CIDR='10.10.10'
+
+# Linux虚拟机模板ID说明
+# 2003: Alibaba Cloud Linux 3
+# 2007: CentOS 7 
+# 2008: AlmaLinux 8 
+# 2009: AlmaLinux 9
+# 20010: AlmaLinux 10
+
+# 2109: CentOS Stream 9
+# 21010: CentOS Stream 10
+
+# 2112: Debian 12
+# 2112: Debian 13
+
+# 2204: Ubuntu 2204
+# 2403: openEuler-24.03
+# 2404: Ubuntu 2404
+# 2604: Ubuntu 2604
+
+# 虚拟机ID说明：
+# 虚拟机网段为10.10.10. 
+# 虚拟机ID为： 10+${IP尾号}
+# 比如 1010 --> IP尾号是10， IP是10.10.10.10
+# 比如 1011 --> IP尾号是11， IP是10.10.10.11
+# 比如 10200 --> IP尾号是200， IP是10.10.10.200
+# 比如 10250 --> IP尾号是250
+
+# k8s实验环境， 1010~1019为k8s master网段，  10101~10109为k8s worker网段
+# k8s配套的MetalLB的网段， 10120~10150
+# 其他高可用或者服务实验，网段为10200~10250
+```
 ## pipelines
 
 ### Code Server
