@@ -108,13 +108,12 @@ jobs:
           sudo apt upgrade -y
           sudo apt install -yq vim wget telnet qemu-guest-agent
           sleep 2
-          sudo apt clean
           # 升级kernel 参考其他部分
-
           # 修改 让本地hosts生效
           sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg
-
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
+          sudo history -c
+          sudo init 0
           EOF
 
       - name: Setup Ubuntu ${{ github.event.inputs.OS }} Template
