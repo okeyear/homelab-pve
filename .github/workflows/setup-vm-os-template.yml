@@ -177,13 +177,12 @@ jobs:
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
           
-          qm set $VM_ID --ciupgrade 0
           qm start $VM_ID
-          sleep 10
+          sleep 30
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
@@ -286,12 +285,11 @@ jobs:
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
-          qm set $VM_ID --ciupgrade 0
           qm start $VM_ID
-          sleep 10
+          sleep 30
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
