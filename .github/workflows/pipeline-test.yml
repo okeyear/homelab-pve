@@ -57,7 +57,7 @@ jobs:
       - name: Debug
         run: |
 
-          echo "############## pwd $pwd ##############"
+          echo "############## pwd $(pwd) ##############"
           pwd
           # ls
           echo "############## cat /etc/os-release ##############" 
