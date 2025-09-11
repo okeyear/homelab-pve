@@ -60,7 +60,7 @@ jobs:
           echo "############## pwd $pwd ##############"
           ls
           echo "############## cat /etc/os-release ##############" 
-          cat /etc/os-release
+          cat /etc/os-release /etc/redhat-release
           echo "############## hostname ##############" 
           hostname
           ip -o -4 a
