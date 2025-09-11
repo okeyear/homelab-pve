@@ -1,4 +1,4 @@
-name: Kind-CI
+name: "[ 00 ] Kind-CI"
 
 on:
   # push:

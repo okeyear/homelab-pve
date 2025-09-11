@@ -1,4 +1,4 @@
-name: "Setup k3s cluster"
+name: "[ 12 ] Setup k3s cluster"
 
 on:
   # Allows you to run this workflow manually from the Actions tab
