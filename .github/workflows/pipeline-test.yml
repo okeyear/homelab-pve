@@ -55,11 +55,15 @@ jobs:
 
       - name: Debug
         run: |
-          pwd
+
+          echo "############## pwd $pwd ##############"
           ls
+          echo "############## cat /etc/os-release ##############" 
           cat /etc/os-release
+          echo "############## hostname ##############" 
           hostname
           # ip -o -4 a
+          echo "############## cat /etc/hosts ##############" 
           cat /etc/hosts
 
     
