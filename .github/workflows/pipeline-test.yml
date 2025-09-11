@@ -59,6 +59,7 @@ jobs:
           ls
           cat /etc/os-release
           hostname
-          ip -o -4 a
+          # ip -o -4 a
+          cat /etc/hosts
 
     
