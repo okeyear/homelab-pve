@@ -1,0 +1,172 @@
+name: "Setup k3s cluster"
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+      skip_download:
+        description: '是否离线安装（todo）'
+        required: false
+        default: 'false'
+
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  VM_TEMPLATE_ID: 2009 # vm模板的ID
+  MASTER_IP: 10.10.10.11
+  NODE01_IP: 10.10.10.101
+  NODE02_IP: 10.10.10.102
+  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+  SSH_OPTS: '-o StrictHostKeyChecking=no'
+  # -o UserKnownHostsFile=/dev/null
+  # -i ${{ github.workspace }}/.ssh/id_rsa
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    # The type of runner that the job will run on
+    runs-on: ${{ github.event.inputs.runner }}
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    # permissions:
+    #   id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+
+      - name: Install tools
+        run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
+
+      - name: Check if already ssh key-based
+        id: check-ssh
+        run: |
+          set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # - uses: actions/checkout@v4
+      
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'    
+
+      # - name: Copy SSH key from ${{ env.TAILSCALE_HOST }} to ${{ github.event.inputs.runner }}
+      #   run: |
+      #     mkdir -p .ssh
+      #     scp $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/.ssh/id_rsa   .ssh/id_rsa
+      #     chmod 600 .ssh/id_rsa
+
+      # install-master:
+      #   needs: setup
+      #   runs-on: ${{ github.event.inputs.runner }}
+      #   steps:
+      - name: Install K3s master
+        run: |
+          cat > install-k3s-master.sh <<EOF
+            ssh $SSH_OPTS root@$MASTER_IP \
+            "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn \
+            sh -s - \
+            --system-default-registry registry.cn-hangzhou.aliyuncs.com \
+            --write-kubeconfig-mode 644"
+          EOF
+
+          cat > get-k3s-token.sh <<EOF
+            ssh $SSH_OPTS root@$MASTER_IP "cat /var/lib/rancher/k3s/server/node-token"
+          EOF
+
+          cat > get-k3s-kubeconfig.sh <<EOF
+            ssh $SSH_OPTS root@$MASTER_IP "cat /etc/rancher/k3s/k3s.yaml | sed s/127.0.0.1/$MASTER_IP/g" > ~/.kube/k3s.kubeconfig
+            export KUBECONFIG=~/.kube/k3s.kubeconfig
+            kubectl get node -o wide
+          EOF
+
+          cat > uninstall-k3s-cluster.sh <<EOF
+            ssh $SSH_OPTS root@$MASTER_IP "/usr/local/bin/k3s-uninstall.sh"
+            ssh $SSH_OPTS root@$NODE01_IP "/usr/local/bin/k3s-agent-uninstall.sh"
+            ssh $SSH_OPTS root@$NODE02_IP "/usr/local/bin/k3s-agent-uninstall.sh"
+          EOF
+
+          for pkg in install-k3s-master.sh  get-k3s-token.sh get-k3s-kubeconfig.sh uninstall-k3s-cluster.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+          # 把本地脚本复制过去并立即执行
+          # cat install-k3s-master.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash install-k3s-master.sh'
+          
+      - name: Get k3s node join token
+        id: token
+        run: |
+          TOKEN=$(ssh -o StrictHostKeyChecking=no root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-token.sh')
+          # echo $TOKEN
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Install K3s worker
+        run: |
+          cat install-k3s-worker.sh <<EOF
+            ssh $SSH_OPTS root@$NODE01_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
+            ssh $SSH_OPTS root@$NODE02_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
+          EOF        
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace install-k3s-worker.sh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash install-k3s-worker.sh'
+
+      - name: get kubeconfig and check
+        run: |
+          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-kubeconfig.sh'
+          # sed -i "s/127.0.0.1/$MASTER_IP/g" kubeconfig
+
+      # - name: Check k3s cluster
+      #   run: |
+      #     # export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+      #     export KUBECONFIG=kubeconfig
+      #     kubectl get nodes -o wide
+
+
+
+      #   install-workers:
+      #     needs: install-master
+      #     runs-on: ubuntu-latest
+      #     strategy:
+      #       matrix:
+      #         ip: ["${{ env.WORKER1_IP }}", "${{ env.WORKER2_IP }}"]
+      #     steps:
+      #       - name: Join worker to cluster
+      #         run: |
+      #           ssh $SSH_OPTS root@${{ matrix.ip }} \
+      #             "curl -sfL https://get.k3s.io | \
+      #              INSTALL_K3S_VERSION=$K3S_VERSION sh - \
+      #              --server https://$MASTER_IP:6443 \
+      #              --token ${{ needs.install-master.outputs.TOKEN }}"
+
+      #   verify:
+      #     needs: [install-workers]
+      #     runs-on: ubuntu-latest
+      #     steps:
+      #       - name: Check nodes
+      #         run: |
+      #           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+      #           kubectl get nodes

@@ -1,0 +1,341 @@
+name: "[ 00 ] Setup VM templates"
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Github Action Runner/Agent'
+        required: true
+        default: self-hosted
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+      OS:
+        description: 'OS Version'
+        required: true
+        default: 'almalinux9'
+        type: choice      
+        options:
+          - ubuntu24.04
+          - ubuntu22.04
+          - debian13
+          - debian12
+          - almalinux10
+          - almalinux9
+          - almalinux8
+          - centos7
+          - centos9stream
+          - alinux3
+          - openEuler2403
+
+      STORAGE:
+        description: 'Storage'
+        required: true
+        default: 'local-zfs'
+        type: choice      
+        options:
+          - local-zfs
+          - local-lvm
+          - local
+
+env:
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
+  CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
+  DNS: 223.5.5.5
+  STORAGE:  ${{ github.event.inputs.STORAGE }} # 'local-lvm' 'local' 'local-zfs'
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup-template:
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner }}
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # - uses: actions/checkout@v4
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: Tailscale Connect
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # 2️⃣  正常通过 100.x 或主机名访问远程机
+      - name: Remote command via SSH
+        run: |
+          # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+          # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+          # tailscale status
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+          # sudo apt install -yq cloud-image-utils
+
+      - name: Setup Debian script
+        if: contains(github.event.inputs.OS, 'debian')
+        run: |
+          echo setup Debian script ...
+
+      - name: Setup Ubuntu script
+        # if: github.event.inputs.OS == 'ubuntu2404'
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          echo setup ubuntu script ...
+          version=$(echo ${{ github.event.inputs.OS }} | sed 's@ubuntu@@')
+          vmid=${version/./}
+          echo "ubuntu_ver=$version"      >> "$GITHUB_ENV"
+          echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
+
+          cat > setup_ubuntu.sh <<'EOF'
+          export DEBIAN_FRONTEND=noninteractive
+          source /etc/os-release
+          # echo ${VERSION_CODENAME} ${UBUNTU_CODENAME}
+          sudo sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
+          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
+          sudo mv /etc/apt/sources.list{,.bak.init}
+          sudo tee /etc/apt/sources.list <<ENDIF
+          # 默认注释了源码镜像以提高 apt update 速度，如有需要可自行取消注释
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
+          ENDIF
+          sleep 2
+          # kvm agent
+          sudo apt update -y
+          sudo apt install -yq vim wget telnet qemu-guest-agent
+          sleep 2
+          # 升级kernel 参考其他部分
+          # 修改 让本地hosts生效
+          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
+          echo 'apt_preserve_sources_list: true' | sudo tee -a /etc/cloud/cloud.cfg.d/99-disable-apt-overwrite.cfg
+
+          # 开启sshd的密码验证
+          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
+          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
+          
+          sudo apt upgrade -yq
+          sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
+          history -c
+          sudo init 0
+          EOF
+
+      - name: Setup Ubuntu ${{ github.event.inputs.OS }} Template
+        # if: github.event.inputs.OS == 'ubuntu2204'
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          echo setup ${{ github.event.inputs.OS }} ...
+          # ubuntu_ver='22.04' # 20.04
+          # VM_ID=${ubuntu_ver/./}
+          cat > setup_ubuntu_tpl.sh <<EOF
+          # 1. download cloud image
+          # wget http://cloud-images.ubuntu.com/releases/focal/release/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img
+          wget -c https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          
+          VM_ID=$VM_ID
+          qm shutdown ${VM_ID} --forceStop
+          sleep 2
+          qm destroy ${VM_ID} --purge
+
+          # 磁盘默认2.2G, 设置为20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          qemu-img resize ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img 20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+
+          # 2. create vm
+          # 创建 id 为 1000 的虚拟机，内存大小为 2G ， CPU 核心数量 2，名称是 ubuntu22.04-template 并设置网卡桥接到 vmbr0
+          qm create $VM_ID --core 2 --memory 4096 --name ubuntu${ubuntu_ver/./}tpl --net0 virtio,bridge=vmbr1
+
+          # 3. 导入下载好的云镜像到 local-lvm 存储; 如果没有额外存储，则默认是local
+          qm importdisk $VM_ID ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img  ${STORAGE}
+
+          # 转换云镜像为虚拟磁盘
+          # qm importdisk $VM_ID ubuntu-20.04-server-cloudimg-amd64.img raid0 --format=qcow2
+          # 104 为虚拟机的ID
+          # raid0 为存储的名称，如果没有额外存储，则默认是local
+          # --format=qcow2 为转换后的格式
+
+          # 4. 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local
+          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
+
+          # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
+          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
+
+          # 5. 添加 cloud init 驱动器
+          # The next step is to configure a CDROM drive which will be used to pass the Cloud-Init data to the VM.
+          qm set $VM_ID --ide2  ${STORAGE}:cloudinit
+
+          # 6. 将 cloud init 驱动器设置为可启动并限制 BIOS 仅从磁盘启动
+          # To be able to boot directly from the Cloud-Init image, set the bootdisk parameter to scsi0, and restrict BIOS to boot from disk only. This will speed up booting, because VM BIOS skips the testing for a bootable CDROM. 
+          # --boot cdn //启动顺序。cdrom  disk network 
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+
+          # 7. 添加串口控制台
+          # Also configure a serial console and use it as a display. Many Cloud-Init images rely on this, as it is an requirement for OpenStack images.
+          qm set $VM_ID --serial0 socket --vga serial0
+
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0   # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          # qm set $VM_ID --ssh-pwauth 1
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
+          
+          qm start $VM_ID
+          sleep 45
+
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace setup_ubuntu.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_ubuntu.sh'
+          EOF
+          cat setup_ubuntu_tpl.sh
+
+          # copy scripts to PVE
+          for pkg in setup_ubuntu*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
+
+      - name: Setup AlmaLinux script
+        if: contains(github.event.inputs.OS, 'almalinux')
+        run: |
+          echo setup AlmaLinux script ...
+          version=$(echo ${{ github.event.inputs.OS }} | sed 's@almalinux@@')
+          vmid=200${version}
+          echo "almalinux_ver=$version"      >> "$GITHUB_ENV"
+          echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
+          cat > setup_almalinux.sh <<'EOF'
+          sudo sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
+          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
+          sudo  systemctl restart sshd
+
+          # sudo  systemctl disable --now firewalld
+          sudo  sed -i 's|SELINUX=enforcing|SELINUX=disabled|' /etc/selinux/config
+
+          sudo  sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+                -e 's|^#.*baseurl=https://.*.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
+                -i.bak \
+                /etc/yum.repos.d/almalinux*.repo
+
+          # https://mirrors.cloud.tencent.com/almalinux/
+          # https://mirrors.aliyun.com
+
+          # kvm agent
+          sudo yum -y install vim wget telnet qemu-guest-agent socat conntrack ebtables ipset
+          # 升级kernel 参考其他部分
+
+          # 修改 让本地hosts生效
+          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
+
+          # 开启sshd的密码验证
+          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
+          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
+
+          sudo yum update -y
+          sudo yum clean all
+          history -c
+          sudo init 0
+          EOF
+
+          # cat setup_almalinux.sh
+
+      - name: Setup AlmaLinux ${{ github.event.inputs.OS }} Template
+        if: contains(github.event.inputs.OS, 'almalinux')
+        # if: contains(github.event.inputs.OS, 'almalinux9')
+        run: |
+          echo setup ${{ github.event.inputs.OS }} Template  ...
+          # VM_ID=2009
+          cat > setup_almalinux_tpl.sh <<EOF
+          # wget -c https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          wget -c https://repo.almalinux.org/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          # wget -c https://mirrors.aliyun.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          # wget -c https://mirrors.cloud.tencent.com/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          # wget -c https://mirrors.cloud.tencent.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          
+
+          VM_ID=$VM_ID
+          qm shutdown ${VM_ID} --forceStop
+          sleep 2
+          qm destroy ${VM_ID} --purge
+
+          qm create $VM_ID --core 2 --memory 4096 --name almalinux9tpl --net0 virtio,bridge=vmbr1
+          qm importdisk $VM_ID AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2 ${STORAGE}
+          # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+
+          qm set $VM_ID --ide2 ${STORAGE}:cloudinit
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+          qm set $VM_ID --serial0 socket --vga serial0
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
+          # 设置磁盘
+          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
+
+          # el9需要设置CPU为host
+          [ "${almalinux_ver}" -eq "9" ] && qm set $VM_ID --cpu cputype=host
+
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          # qm set $VM_ID --ssh-pwauth 1
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+          qm start $VM_ID
+          sleep 30
+
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_almalinux.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          # cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace setup_almalinux.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_almalinux.sh'          
+          EOF
+
+          cat setup_almalinux_tpl.sh
+
+          # copy scripts to PVE
+          for pkg in setup_almalinux*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
+
+      
