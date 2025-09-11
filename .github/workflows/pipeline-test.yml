@@ -31,14 +31,15 @@ env:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
-  setup-vms:
+  pipeline-test:
     # The type of runner that the job will run on
     runs-on: ${{ github.event.inputs.runner }}
     # runs-on: [self-hosted]
     # runs-on: ubuntu-latest
     container:
       # 指定一个 Docker 镜像
-      image: ubuntu:latest # 使用官方的 Node.js 镜像
+      # image: ubuntu:latest # 使用官方的 Node.js 镜像
+      image: registry.cn-beijing.aliyuncs.com/my-dockermirrors/centos:8-scf # 使用官方的 Node.js 镜像
       # 可选：设置环境变量
       # env:
       #   NODE_ENV: test
@@ -62,8 +63,10 @@ jobs:
           cat /etc/os-release
           echo "############## hostname ##############" 
           hostname
-          # ip -o -4 a
+          ip -o -4 a
           echo "############## cat /etc/hosts ##############" 
           cat /etc/hosts
+          echo "############## python pip ##############" 
+          pip3 -V
 
     
