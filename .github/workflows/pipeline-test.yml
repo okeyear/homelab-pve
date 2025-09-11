@@ -58,7 +58,8 @@ jobs:
         run: |
 
           echo "############## pwd $pwd ##############"
-          ls
+          pwd
+          # ls
           echo "############## cat /etc/os-release ##############" 
           cat /etc/os-release /etc/redhat-release
           echo "############## hostname ##############" 
