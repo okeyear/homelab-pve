@@ -138,13 +138,13 @@ jobs:
           cat install-k3s-worker.sh <<EOF
             ssh $SSH_OPTS ${VM_USER}@$NODE01_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
             ssh $SSH_OPTS ${VM_USER}@$NODE02_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
-          EOF        
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace install-k3s-worker.sh ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/tmp/
-          ssh $SSH_OPTS ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'sudo bash /tmp/install-k3s-worker.sh'
+          EOF
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace install-k3s-worker.sh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'sudo bash install-k3s-worker.sh'
 
       - name: get kubeconfig and check
         run: |
-          ssh $SSH_OPTS ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-kubeconfig.sh'
+          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-kubeconfig.sh'
           # sed -i "s/127.0.0.1/$MASTER_IP/g" kubeconfig
 
       # - name: Check k3s cluster
