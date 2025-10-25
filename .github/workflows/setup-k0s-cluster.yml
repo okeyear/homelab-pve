@@ -10,7 +10,7 @@ on:
       runner:
         description: 'Runner Agent'
         required: true
-        default: ubuntu-latest
+        default: self-hosted
         type: choice
         options:
           - self-hosted
@@ -34,9 +34,9 @@ env:
   TAILSCALE_NET: taile80cb.ts.net
   # VM_TEMPLATE_ID: 2009 # vm模板的ID
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
-  MASTER_IP: 10.10.10.11
-  NODE01_IP: 10.10.10.101
-  NODE02_IP: 10.10.10.102
+  # MASTER_IP: 10.10.10.11
+  # NODE01_IP: 10.10.10.101
+  # NODE02_IP: 10.10.10.102
   VM_USER: ${{ github.event.inputs.vm_user }}
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -58,194 +58,194 @@ jobs:
           # 转换为数组
           ITEMS=${{ fromJSON(github.event.inputs.VMs) }}
           
-          echo "Array length: ${{ fromJSON(github.event.inputs.VMs).length }}"
-          
           # 遍历数组
           for item in ${{ join(fromJSON(github.event.inputs.VMs), ' ') }}; do
             echo "Processing: $item"
           done
 
-      # - name: Install tools
-      #   run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
+      - name: Install tools
+        run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
 
-      # - name: Check if already ssh key-based
-      #   id: check-ssh
+      - name: Check if already ssh key-based
+        id: check-ssh
+        run: |
+          set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # - name: set tailscale ssh
       #   run: |
-      #     set +e
+      #     # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+      #     # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+      #     # tailscale status
       #     test -d ~/.ssh || mkdir -p ~/.ssh
       #     ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
-      #     ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
-      #     if [ $? -eq 0 ]; then
-      #       echo "keyless=true" >> $GITHUB_OUTPUT
-      #     else
-      #       echo "keyless=false" >> $GITHUB_OUTPUT
-      #     fi      
+      #     echo ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
 
-      # # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      # - uses: actions/checkout@v4
+      - name: get k0s latest version
+        run: |
+          function get_github_latest_release() {
+            curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+                grep '"tag_name":' |                                          # Get tag line
+                sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
+          }
 
-      # # 1️⃣  把 Runner 接入 tailnet
-      # - name: setup Tailscale Connect (if needed)
-      #   if: steps.check-ssh.outputs.keyless != 'true'
-      #   uses: tailscale/github-action@v3
-      #   with:
-      #     oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      #     oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
-      #     tags: tag:ci     # 与 ACL 中的 tag 保持一致
-      #     version: latest # https://pkgs.tailscale.com/stable/#static
-      #     use-cache: 'true'
+          # k0sctl
+          VERSION=$(get_github_latest_release k0sproject/k0sctl)
+          echo "K0SCTL_VERSION=${VERSION}" >> $GITHUB_ENV
+          # k0s
+          VERSION=$(get_github_latest_release k0sproject/k0s)
+          echo "K0S_VERSION=${VERSION}" >> $GITHUB_ENV
 
-      # # - name: set tailscale ssh
-      # #   run: |
-      # #     # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
-      # #     # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
-      # #     # tailscale status
-      # #     test -d ~/.ssh || mkdir -p ~/.ssh
-      # #     ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
-      # #     echo ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
-      # #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+      - name: Cache k0sctl binary
+        id:   cache-k0sctl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/k0sctl
+          key: k0sctl-${{ env.K0SCTL_VERSION }}-linux-amd64
 
-      # - name: get k0s latest version
-      #   run: |
-      #     function get_github_latest_release() {
-      #       curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
-      #           grep '"tag_name":' |                                          # Get tag line
-      #           sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
-      #     }
+      - name: Download k0sctl (if cache miss)
+        if: steps.cache-k0sctl.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/k0sproject/k0sctl/releases/download/${{ env.K0SCTL_VERSION }}/k0sctl-linux-amd64" -O "/tmp/k0sctl"
 
-      #     # k0sctl
-      #     VERSION=$(get_github_latest_release k0sproject/k0sctl)
-      #     echo "K0SCTL_VERSION=${VERSION}" >> $GITHUB_ENV
-      #     # k0s
-      #     VERSION=$(get_github_latest_release k0sproject/k0s)
-      #     echo "K0S_VERSION=${VERSION}" >> $GITHUB_ENV
+      - name: Cache k0s binary
+        id:   cache-k0s
+        uses: actions/cache@v4
+        with:
+          path: /tmp/k0s
+          key: k0s-${{ env.K0S_VERSION }}-amd64
 
-      # - name: Cache k0sctl binary
-      #   id:   cache-k0sctl
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/k0sctl
-      #     key: k0sctl-${{ env.K0SCTL_VERSION }}-linux-amd64
+      - name: Download k0s (if cache miss)
+        if: steps.cache-k0s.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/k0sproject/k0s/releases/download/${{ env.K0S_VERSION }}/k0s-${{ env.K0S_VERSION }}-amd64" -O "/tmp/k0s"
 
-      # - name: Download k0sctl (if cache miss)
-      #   if: steps.cache-k0sctl.outputs.cache-hit != 'true'
-      #   run: |
-      #     wget -q "https://github.com/k0sproject/k0sctl/releases/download/${{ env.K0SCTL_VERSION }}/k0sctl-linux-amd64" -O "/tmp/k0sctl"
+      - name: install k0s k0sctl
+        run: |
+          sudo install -m 755 /tmp/k0sctl /usr/local/bin/k0sctl
+          sudo install -m 755 /tmp/k0s /usr/local/bin/k0s          
 
-      # - name: Cache k0s binary
-      #   id:   cache-k0s
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/k0s
-      #     key: k0s-${{ env.K0S_VERSION }}-amd64
+          # 下载离线包
+          k0s airgap list-images --all > airgap-images.txt
 
-      # - name: Download k0s (if cache miss)
-      #   if: steps.cache-k0s.outputs.cache-hit != 'true'
-      #   run: |
-      #     wget -q "https://github.com/k0sproject/k0s/releases/download/${{ env.K0S_VERSION }}/k0s-${{ env.K0S_VERSION }}-amd64" -O "/tmp/k0s"
+      - name: Cache airgap images
+        id:   cache-airgap-images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/image-bundle.tar
+          # key: ${{ hashFiles('airgap-images.txt') }}
+          key: images-${{ env.K0S_VERSION }}-amd64
 
-      # - name: install k0s k0sctl
-      #   run: |
-      #     sudo install -m 755 /tmp/k0sctl /usr/local/bin/k0sctl
-      #     sudo install -m 755 /tmp/k0s /usr/local/bin/k0s          
-
-      #     # 下载离线包
-      #     k0s airgap list-images --all > airgap-images.txt
-
-      # - name: Cache airgap images
-      #   id:   cache-airgap-images
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: /tmp/image-bundle.tar
-      #     # key: ${{ hashFiles('airgap-images.txt') }}
-      #     key: images-${{ env.K0S_VERSION }}-amd64
-
-      # - name: download k0s airgap bundle-artifacts images
-      #   if: steps.cache-airgap-images.outputs.cache-hit != 'true'
-      #   run: |
-      #     # 下载离线包
-      #     # 方式1  k0s
-      #     # k0s airgap list-images --all > airgap-images.txt
-      #     k0s airgap bundle-artifacts -v -o /tmp/image-bundle.tar < airgap-images.txt
-      #     # check
-      #     pwd
-      #     # ls
-      #     ls /tmp
+      - name: download k0s airgap bundle-artifacts images
+        if: steps.cache-airgap-images.outputs.cache-hit != 'true'
+        run: |
+          # 下载离线包
+          # 方式1  k0s
+          # k0s airgap list-images --all > airgap-images.txt
+          k0s airgap bundle-artifacts -v -o /tmp/image-bundle.tar < airgap-images.txt
+          # check
+          pwd
+          # ls
+          ls /tmp
 
 
 
-      # - name: prepare k0sctl.yaml
-      #   # if: steps.ache-airgap-images.outputs.cache-hit != 'true'
-      #   run: |
-      #     # CIDR='10.10.10'
-      #     k0sctl init ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}  > k0sctl.yaml
-      #     sed -i '/keyPath/s/null/\/root\/.ssh\/id_rsa/' k0sctl.yaml
-      #     sed -i "s@user: root@user: ${VM_USER}@g" k0sctl.yaml
+      - name: prepare k0sctl.yaml
+        # if: steps.ache-airgap-images.outputs.cache-hit != 'true'
+        run: |
+          # CIDR='10.10.10'
+          # k0sctl init ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}  > k0sctl.yaml
+          k0sctl init ${{ join(fromJSON(github.event.inputs.VMs), ' ') }} > k0sctl.yaml
+          sed -i '/keyPath/s/null/\/root\/.ssh\/id_rsa/' k0sctl.yaml
+          sed -i "s@user: root@user: ${VM_USER}@g" k0sctl.yaml
 
-      #     cat k0sctl.yaml
-      #     yq eval '
-      #       .spec.hosts |= map(
-      #         select(.role == "worker") |=
-      #           . +
-      #           {
-      #             "uploadBinary": true,
-      #             "files": [
-      #               {
-      #                 "src": "/root/image-bundle.tar",
-      #                 "dstDir": "/var/lib/k0s/images",
-      #                 "perm": "0755"
-      #               }
-      #             ]
-      #           }
-      #       )
-      #     ' -i k0sctl.yaml
-      #     # 增加k0s.version
-      #     yq eval '
-      #       .spec.k0s.version = "${{ env.K0S_VERSION }}"
-      #     ' -i k0sctl.yaml
-      #     # 增加路径， 不然会用家目录下的.cache或者从公网下载
-      #     yq eval '.spec.hosts[0].k0sBinaryPath = "/usr/local/bin/k0s"' -i k0sctl.yaml
+          cat k0sctl.yaml
+          yq eval '
+            .spec.hosts |= map(
+              select(.role == "worker") |=
+                . +
+                {
+                  "uploadBinary": true,
+                  "files": [
+                    {
+                      "src": "/root/image-bundle.tar",
+                      "dstDir": "/var/lib/k0s/images",
+                      "perm": "0755"
+                    }
+                  ]
+                }
+            )
+          ' -i k0sctl.yaml
+          # 增加k0s.version
+          yq eval '
+            .spec.k0s.version = "${{ env.K0S_VERSION }}"
+          ' -i k0sctl.yaml
+          # 增加路径， 不然会用家目录下的.cache或者从公网下载
+          yq eval '.spec.hosts[0].k0sBinaryPath = "/usr/local/bin/k0s"' -i k0sctl.yaml
 
-      #     cat k0sctl.yaml
+          cat k0sctl.yaml
 
-      #     cat > copy_k0s.sh <<EOF
-      #     test -d ~/.ssh || mkdir -p ~/.ssh
-      #     touch ~/.ssh/known_hosts
-      #     chmod 400 ~/.ssh/known_hosts
-      #     for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
-      #     do
-      #       # ssh-keygen -f "~/.ssh/known_hosts" -R \$i
-      #       ssh-keyscan -H \$i >> ~/.ssh/known_hosts
-      #       rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace /usr/local/bin/k0s ${VM_USER}@\$i:/usr/local/bin/k0s
-      #     done
-      #     EOF
-      #     # ls 
-      #     # ls ~/.ssh -ld
-      #     # Copy to remote
-      #     # test -d ~/.ssh || mkdir -p ~/.ssh
-      #     # touch ~/.ssh/known_hosts
-      #     # chmod 400 ~/.ssh/known_hosts
-      #     for pkg in /tmp/k0sctl /tmp/k0s /tmp/image-bundle.tar k0sctl.yaml copy_k0s.sh
-      #     do
-      #       # ssh-keygen -f "~/.ssh/known_hosts" -R ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}
-      #       # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
-      #       echo "Sync ${pkg} from runner to ${{ env.TAILSCALE_HOST }} ..."         
-      #       rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-      #       # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-      #     done
+          cat > copy_k0s.sh <<EOF
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 400 ~/.ssh/known_hosts
+          # for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+          for i in ${{ join(fromJSON(github.event.inputs.VMs), ' ') }}
+          do
+            # ssh-keygen -f "~/.ssh/known_hosts" -R \$i
+            ssh-keyscan -H \$i >> ~/.ssh/known_hosts
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace /usr/local/bin/k0s ${VM_USER}@\$i:/usr/local/bin/k0s
+          done
+          EOF
+          # ls 
+          # ls ~/.ssh -ld
+          # Copy to remote
+          # test -d ~/.ssh || mkdir -p ~/.ssh
+          # touch ~/.ssh/known_hosts
+          # chmod 400 ~/.ssh/known_hosts
+          for pkg in /tmp/k0sctl /tmp/k0s /tmp/image-bundle.tar k0sctl.yaml copy_k0s.sh
+          do
+            # ssh-keygen -f "~/.ssh/known_hosts" -R ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}
+            # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+            echo "Sync ${pkg} from runner to ${{ env.TAILSCALE_HOST }} ..."         
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
 
 
 
-      # - name: Setup k0s cluster via k0sctl.yaml
-      #   run: |
-      #     # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd"
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
-      #     # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@${{ env.MASTER_IP }}:/usr/local/bin/k0s"
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec script copy k0s to VM ... ; bash copy_k0s.sh"
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec k0sctl apply; k0sctl apply --config k0sctl.yaml"
+      - name: Setup k0s cluster via k0sctl.yaml
+        run: |
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
+          # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@${{ env.MASTER_IP }}:/usr/local/bin/k0s"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec script copy k0s to VM ... ; bash copy_k0s.sh"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec k0sctl apply; k0sctl apply --config k0sctl.yaml"
 
-      # - name: get kubeconfig
-      #   run: |
-      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "mkdir ~/.kube;  k0sctl kubeconfig > ~/.kube/k0s.kubeconfig "
+      - name: get kubeconfig
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "mkdir ~/.kube;  k0sctl kubeconfig > ~/.kube/k0s.kubeconfig "
