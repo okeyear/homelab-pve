@@ -160,6 +160,7 @@ jobs:
           # CIDR='10.10.10'
           k0sctl init ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}  > k0sctl.yaml
           sed -i '/keyPath/s/null/\/root\/.ssh\/id_rsa/' k0sctl.yaml
+          sed -i "s@user: root@user: ${VM_USER}@g" k0sctl.yaml
 
           cat k0sctl.yaml
           yq eval '
