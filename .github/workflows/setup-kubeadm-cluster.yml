@@ -15,11 +15,13 @@ on:
         options:
           - self-hosted
           - ubuntu-latest
+
       ip_list:
         description: 'VMs IP List'
         required: true
         default: '10.10.10.11,10.10.10.101,10.10.10.102'
         type: string
+
       k8s_version:
         description: 'k8s version'
         required: true
@@ -29,7 +31,7 @@ on:
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
-  VM_TEMPLATE_ID: 2009 # vm模板的ID
+  # VM_TEMPLATE_ID: 2009 # vm模板的ID
   SSH_KEY: ${{ secrets.VM_ID_RSA }}
   # MASTER_IP: 10.10.10.11
   # NODE01_IP: 10.10.10.101
