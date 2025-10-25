@@ -1,0 +1,46 @@
+
+name: "[ 00 ] test Githuh Actions"
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Github Action Runner/Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+          - pve
+
+env:
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
+  # VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
+  VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
+  VM_USER: ${{ github.event.inputs.vm_user }}
+  CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
+
+  # MASTER_IP: 10.10.10.11
+  # NODE01_IP: 10.10.10.101
+  # NODE02_IP: 10.10.10.102
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup-vms:
+    # The type of runner that the job will run on
+    runs-on: ${{ github.event.inputs.runner }}
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Get VM Template ID
+        run: |
+          echo hello
