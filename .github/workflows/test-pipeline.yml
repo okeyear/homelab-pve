@@ -49,5 +49,5 @@ jobs:
       - name: Get VM Template ID
         run: |
           echo hello
-          ls -l
+          ls -la
           pwd
