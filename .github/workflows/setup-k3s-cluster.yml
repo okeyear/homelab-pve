@@ -16,7 +16,14 @@ on:
         description: '是否离线安装（todo）'
         required: false
         default: 'false'
-
+      vm_user:
+        description: 'VM Guest: OS User'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
@@ -24,6 +31,7 @@ env:
   MASTER_IP: 10.10.10.11
   NODE01_IP: 10.10.10.101
   NODE02_IP: 10.10.10.102
+  VM_USER: ${{ github.event.inputs.vm_user }}
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
   SSH_OPTS: '-o StrictHostKeyChecking=no'
   # -o UserKnownHostsFile=/dev/null
@@ -52,7 +60,7 @@ jobs:
           set +e
           test -d ~/.ssh || mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
-          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          ssh -o BatchMode=yes -o ConnectTimeout=5  ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
           if [ $? -eq 0 ]; then
             echo "keyless=true" >> $GITHUB_OUTPUT
           else
@@ -76,7 +84,7 @@ jobs:
       # - name: Copy SSH key from ${{ env.TAILSCALE_HOST }} to ${{ github.event.inputs.runner }}
       #   run: |
       #     mkdir -p .ssh
-      #     scp $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/.ssh/id_rsa   .ssh/id_rsa
+      #     scp $SSH_OPTS ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/tmp/.ssh/id_rsa   .ssh/id_rsa
       #     chmod 600 .ssh/id_rsa
 
       # install-master:
@@ -86,7 +94,7 @@ jobs:
       - name: Install K3s master
         run: |
           cat > install-k3s-master.sh <<EOF
-            ssh $SSH_OPTS root@$MASTER_IP \
+            ssh $SSH_OPTS ${VM_USER}@$MASTER_IP \
             "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn \
             sh -s - \
             --system-default-registry registry.cn-hangzhou.aliyuncs.com \
@@ -94,25 +102,25 @@ jobs:
           EOF
 
           cat > get-k3s-token.sh <<EOF
-            ssh $SSH_OPTS root@$MASTER_IP "cat /var/lib/rancher/k3s/server/node-token"
+            ssh $SSH_OPTS ${VM_USER}@$MASTER_IP "sudo cat /var/lib/rancher/k3s/server/node-token"
           EOF
 
           cat > get-k3s-kubeconfig.sh <<EOF
-            ssh $SSH_OPTS root@$MASTER_IP "cat /etc/rancher/k3s/k3s.yaml | sed s/127.0.0.1/$MASTER_IP/g" > ~/.kube/k3s.kubeconfig
+            ssh $SSH_OPTS ${VM_USER}@$MASTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml | sed s/127.0.0.1/$MASTER_IP/g" > ~/.kube/k3s.kubeconfig
             export KUBECONFIG=~/.kube/k3s.kubeconfig
             kubectl get node -o wide
           EOF
 
           cat > uninstall-k3s-cluster.sh <<EOF
-            ssh $SSH_OPTS root@$MASTER_IP "/usr/local/bin/k3s-uninstall.sh"
-            ssh $SSH_OPTS root@$NODE01_IP "/usr/local/bin/k3s-agent-uninstall.sh"
-            ssh $SSH_OPTS root@$NODE02_IP "/usr/local/bin/k3s-agent-uninstall.sh"
+            ssh $SSH_OPTS ${VM_USER}@$MASTER_IP "/usr/local/bin/k3s-uninstall.sh"
+            ssh $SSH_OPTS ${VM_USER}@$NODE01_IP "/usr/local/bin/k3s-agent-uninstall.sh"
+            ssh $SSH_OPTS ${VM_USER}@$NODE02_IP "/usr/local/bin/k3s-agent-uninstall.sh"
           EOF
 
           for pkg in install-k3s-master.sh  get-k3s-token.sh get-k3s-kubeconfig.sh uninstall-k3s-cluster.sh
           do
-            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           done
           # 把本地脚本复制过去并立即执行
           # cat install-k3s-master.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
@@ -128,15 +136,15 @@ jobs:
       - name: Install K3s worker
         run: |
           cat install-k3s-worker.sh <<EOF
-            ssh $SSH_OPTS root@$NODE01_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
-            ssh $SSH_OPTS root@$NODE02_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
+            ssh $SSH_OPTS ${VM_USER}@$NODE01_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
+            ssh $SSH_OPTS ${VM_USER}@$NODE02_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
           EOF        
-          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace install-k3s-worker.sh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash install-k3s-worker.sh'
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace install-k3s-worker.sh ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/tmp/
+          ssh $SSH_OPTS ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'sudo bash /tmp/install-k3s-worker.sh'
 
       - name: get kubeconfig and check
         run: |
-          ssh $SSH_OPTS root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-kubeconfig.sh'
+          ssh $SSH_OPTS ${VM_USER}@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash get-k3s-kubeconfig.sh'
           # sed -i "s/127.0.0.1/$MASTER_IP/g" kubeconfig
 
       # - name: Check k3s cluster
@@ -156,7 +164,7 @@ jobs:
       #     steps:
       #       - name: Join worker to cluster
       #         run: |
-      #           ssh $SSH_OPTS root@${{ matrix.ip }} \
+      #           ssh $SSH_OPTS ${VM_USER}@${{ matrix.ip }} \
       #             "curl -sfL https://get.k3s.io | \
       #              INSTALL_K3S_VERSION=$K3S_VERSION sh - \
       #              --server https://$MASTER_IP:6443 \

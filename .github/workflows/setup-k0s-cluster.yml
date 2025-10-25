@@ -15,6 +15,14 @@ on:
         options:
           - self-hosted
           - ubuntu-latest
+      vm_user:
+        description: 'VM Guest: OS User'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root          
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
@@ -22,7 +30,8 @@ env:
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
   MASTER_IP: 10.10.10.11
   NODE01_IP: 10.10.10.101
-  NODE02_IP: 10.10.10.102  
+  NODE02_IP: 10.10.10.102
+  VM_USER: ${{ github.event.inputs.vm_user }}
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -186,7 +195,7 @@ jobs:
           do
             # ssh-keygen -f "~/.ssh/known_hosts" -R \$i
             ssh-keyscan -H \$i >> ~/.ssh/known_hosts
-            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace /usr/local/bin/k0s root@\$i:/usr/local/bin/k0s
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace /usr/local/bin/k0s ${VM_USER}@\$i:/usr/local/bin/k0s
           done
           EOF
           # ls 
@@ -199,7 +208,7 @@ jobs:
           do
             # ssh-keygen -f "~/.ssh/known_hosts" -R ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}
             # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts          
-            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
             # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           done
 
