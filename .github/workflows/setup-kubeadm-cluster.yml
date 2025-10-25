@@ -139,6 +139,7 @@ jobs:
         run: |
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           echo ansible-playbook -i example/hosts.s-master.hostname.ini 90-init-cluster.yml
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "sudo apt install -yq ansible"
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "pwd;cd kubeadm-ha; ansible-playbook -i example/hosts.s-master.hostname.ini 90-init-cluster.yml"
 
     
