@@ -7,15 +7,6 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
-      runner:
-        description: 'Github Action Runner/Agent'
-        required: true
-        default: ubuntu-latest
-        type: choice
-        options:
-          - self-hosted
-          - ubuntu-latest
-
       vm_prefix:
         description: 'VM Name Prefix'
         required: true
@@ -65,8 +56,8 @@ jobs:
   # This workflow contains a single job called "build"
   setup-vms:
     # The type of runner that the job will run on
-    runs-on: ${{ github.event.inputs.runner }}
-    # runs-on: [self-hosted]
+    # runs-on: ${{ github.event.inputs.runner }}
+    runs-on: [self-hosted]
     # runs-on: ubuntu-latest
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
@@ -99,7 +90,7 @@ jobs:
           echo "VM_TEMPLATE_ID=$temp_id"      >> "$GITHUB_ENV"
 
       # 像普通官方 action 一样用 with 传参
-      - uses: ./pipeline/actions/prepare-pipeline-env
+      - uses: ./pipeline-template/actions/prepare-env
         # with:
         #   node-version: '22'      # 想传啥就传啥
         #   python-version: '3.10'  # 固定版本也行, 这个是 pipeline agent运行用的,不是scf业务环境
