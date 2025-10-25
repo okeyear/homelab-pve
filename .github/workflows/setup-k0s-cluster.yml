@@ -222,8 +222,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0sctl /usr/local/bin/k0sctl"
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "install -m 755 k0s /usr/local/bin/k0s"
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "scp -o StrictHostKeyChecking=no /usr/local/bin/k0s root@${{ env.MASTER_IP }}:/usr/local/bin/k0s"
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo exec script; bash copy_k0s.sh"
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "k0sctl apply --config k0sctl.yaml"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec script copy k0s to VM ... ; bash copy_k0s.sh"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "echo Exec k0sctl apply; k0sctl apply --config k0sctl.yaml"
 
       - name: get kubeconfig
         run: |
