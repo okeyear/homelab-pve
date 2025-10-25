@@ -6,15 +6,15 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
-      runner:
-        description: 'Github Action Runner/Agent'
-        required: true
-        default: ubuntu-latest
-        type: choice
-        options:
-          - self-hosted
-          - ubuntu-latest
-          - pve
+      # runner:
+      #   description: 'Github Action Runner/Agent'
+      #   required: true
+      #   default: ubuntu-latest
+      #   type: choice
+      #   options:
+      #     - self-hosted
+      #     - ubuntu-latest
+      #     - pve
 
 env:
   TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
@@ -33,8 +33,9 @@ jobs:
   # This workflow contains a single job called "build"
   setup-vms:
     # The type of runner that the job will run on
-    runs-on: ${{ github.event.inputs.runner }}
+    # runs-on: ${{ github.event.inputs.runner }}
     # runs-on: [self-hosted]
+    runs-on: [pve]
     # runs-on: ubuntu-latest
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
