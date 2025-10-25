@@ -79,6 +79,12 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # 像普通官方 action 一样用 with 传参
+      - uses: ./pipeline-template/actions/prepare-env
+        # with:
+        #   node-version: '22'      # 想传啥就传啥
+        #   python-version: '3.10'  # 固定版本也行, 这个是 pipeline agent运行用的,不是scf业务环境
+      
       - name: Get VM Template ID
         run: |
           cat > versions.txt <<'EOF'
