@@ -135,7 +135,7 @@ jobs:
 
       - name: Install K3s worker
         run: |
-          cat install-k3s-worker.sh <<EOF
+          cat > install-k3s-worker.sh <<EOF
             ssh $SSH_OPTS ${VM_USER}@$NODE01_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
             ssh $SSH_OPTS ${VM_USER}@$NODE02_IP "curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_MIRROR=cn K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=${{ env.TOKEN }} sh -"
           EOF
