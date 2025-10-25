@@ -10,7 +10,7 @@ on:
       runner:
         description: 'Github Action Runner/Agent'
         required: true
-        default: ubuntu-latest
+        default: self-hosted
         type: choice
         options:
           - self-hosted
