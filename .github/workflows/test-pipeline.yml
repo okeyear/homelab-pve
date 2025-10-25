@@ -1,5 +1,6 @@
+# This is a basic workflow to help you get started with Actions
 
-name: "[ 00 ] test Githuh Actions"
+name: "[ 02 ] Create VMs"
 
 # Controls when the workflow will run
 on:
@@ -14,40 +15,186 @@ on:
         options:
           - self-hosted
           - ubuntu-latest
-          - pve
 
+      vm_prefix:
+        description: 'VM Name Prefix'
+        required: true
+        default: 'k8s-'
+        type: string
+
+      vm_template:
+        description: 'VM Clone from Template'
+        required: true
+        default: almalinux9
+        type: choice
+        options:
+          - ubuntu24.04
+          - ubuntu22.04
+          - debian13
+          - debian12
+          - almalinux10
+          - almalinux9
+          - almalinux8
+          - centos7
+          - centos9stream
+          - alinux3
+          - openEuler2403
+
+      ip_list:
+        description: 'VMs IP List'
+        required: true
+        default: '11,101,102'
+        type: string
+
+      vm_user:
+        description: 'VM Guest: OS User'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root
 env:
-  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
-  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
   # VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
   VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
   VM_USER: ${{ github.event.inputs.vm_user }}
   CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
 
-  # MASTER_IP: 10.10.10.11
-  # NODE01_IP: 10.10.10.101
-  # NODE02_IP: 10.10.10.102
-
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
-  test-actions:
+  setup-vms:
     # The type of runner that the job will run on
     runs-on: ${{ github.event.inputs.runner }}
     # runs-on: [self-hosted]
-    # runs-on: [pve]
     # runs-on: ubuntu-latest
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Get VM Template ID
         run: |
-          echo hello
-          ls -la
-          pwd
+          cat > versions.txt <<'EOF'
+          2003 alinux3
+          2007 centos7
+          2008 almalinux8
+          2009 almalinux9
+          20010 almalinux10
+
+          2109 centos9stream
+          21010 centos10stream
+
+          2112 debian12
+          2113 debian13
+
+          2204 ubuntu22.04
+          2403 openEuler2403
+          2404 ubuntu24.04
+          2604 ubuntu26.04
+          EOF
+          temp_id=$(grep "\s${{ github.event.inputs.vm_template }}$" versions.txt | awk '{print $1}')
+          echo "VM_TEMPLATE_ID=$temp_id"      >> "$GITHUB_ENV"
+
+      # 像普通官方 action 一样用 with 传参
+      - uses: ./pipeline/actions/prepare-pipeline-env
+        # with:
+        #   node-version: '22'      # 想传啥就传啥
+        #   python-version: '3.10'  # 固定版本也行, 这个是 pipeline agent运行用的,不是scf业务环境
+
+
+      # - name: Check if already ssh key-based
+      #   id: check-ssh
+      #   run: |
+      #     set +e
+      #     test -d ~/.ssh || mkdir -p ~/.ssh
+      #     ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+      #     ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+      #     if [ $? -eq 0 ]; then
+      #       echo "keyless=true" >> $GITHUB_OUTPUT
+      #     else
+      #       echo "keyless=false" >> $GITHUB_OUTPUT
+      #     fi      
+
+      # # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # # - uses: actions/checkout@v4
+      
+      # # 1️⃣  把 Runner 接入 tailnet
+      # - name: setup Tailscale Connect (if needed)
+      #   if: steps.check-ssh.outputs.keyless != 'true'
+      #   uses: tailscale/github-action@v3
+      #   with:
+      #     oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      #     oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+      #     tags: tag:ci     # 与 ACL 中的 tag 保持一致
+      #     version: latest # https://pkgs.tailscale.com/stable/#static
+      #     use-cache: 'true'
+
+      # # 2️⃣  正常通过 100.x 或主机名访问远程机
+      # - name: Remote command via SSH
+      #   run: |
+      #     # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+      #     # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+      #     # tailscale status
+      #     test -d ~/.ssh || mkdir -p ~/.ssh
+      #     ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+      #     # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+
+      #     cat > setup_vms.sh <<'EOF'
+      #     # k8s controlplane 4C8G & worker node 8C12G
+      #     # for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+      #     ips=${{ github.event.inputs.ip_list }}
+      #     arr=(${ips//,/ })
+      #     for i in ${arr[*]}
+      #     do
+      #       VM_ID=10${i##*.}
+      #       echo VM_ID $VM_ID
+      #       # CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
+      #       echo CIDR ${{ env.VM_USER }}
+      #       pct destroy ${VM_ID} --force
+      #       qm shutdown ${VM_ID} --forceStop
+      #       sleep 2
+      #       qm destroy ${VM_ID} --purge
+      #       qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID --full # 完整克隆还是链接克隆
+      #       qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 4 || echo 2) \
+      #                 --memory $(test $VM_ID -ge 10000 && echo 8192 || echo 4096) --name ${{ env.VM_PREFIX }}node${VM_ID}
+      #       qm set $VM_ID --ipconfig0 ip=${{ env.CIDR }}.${i}/24,gw=${{ env.CIDR }}.1  # 设置ip
+      #       qm set $VM_ID --cipassword vagrant --ciuser ${{ env.VM_USER }} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+      #       ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${{ env.CIDR }}.${i}"
+      #       qm disk resize $VM_ID scsi0 40G # 设置硬盘
+      #       tags=$(qm config 2009 | grep tag | awk '{print $2}' | sed "s@template@${{ env.VM_PREFIX }}@" )
+      #       # qm set $VM_ID --delete tags
+      #       qm set $VM_ID --tags "$tags"
+      #       qm start $VM_ID
+      #     done
+      #     EOF
+
+      #     cat setup_vms.sh
+
+      #     # 把本地脚本复制过去并立即执行
+      #     alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      #     cat setup_vms.sh | ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+
+
+
+      # - uses: actions/checkout@v4
+
+      # - name: Install OS base pkgs
+      #   run: |
+      #     sudo apt-get update --yes -qq
+      #     sudo apt-get install --yes --no-install-recommends python3-pip unzip curl wget jq git build-essential -qq
+
+
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v3    # 安装 Docker Buildx 工具链
+
+
+      # - name: Debug
+      #   run: |
+      #     pwd
+      #     ls
+      #     qm list
+
+    
