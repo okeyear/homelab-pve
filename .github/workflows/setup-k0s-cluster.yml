@@ -207,7 +207,8 @@ jobs:
           for pkg in /tmp/k0sctl /tmp/k0s /tmp/image-bundle.tar k0sctl.yaml copy_k0s.sh
           do
             # ssh-keygen -f "~/.ssh/known_hosts" -R ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}
-            # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts          
+            # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+            echo "Sync ${pkg} from runner to ${{ env.TAILSCALE_HOST }} ..."         
             rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
             # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           done
