@@ -79,6 +79,8 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v5
+            
       # 像普通官方 action 一样用 with 传参
       - uses: ./pipeline-template/actions/prepare-env
         # with:
@@ -124,8 +126,7 @@ jobs:
             echo "keyless=false" >> $GITHUB_OUTPUT
           fi      
 
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      # - uses: actions/checkout@v4
+
       
       # 1️⃣  把 Runner 接入 tailnet
       - name: setup Tailscale Connect (if needed)
