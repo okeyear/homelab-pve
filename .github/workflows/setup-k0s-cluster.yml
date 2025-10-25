@@ -64,7 +64,7 @@ jobs:
           done
 
       - name: Install tools
-        run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
+        run: sudo apt-get update -yq && sudo apt-get install -yq yq sshpass
 
       - name: Check if already ssh key-based
         id: check-ssh
