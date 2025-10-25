@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "[ 11 ] Setup k0s cluster"
+name: "[ 12 ] k0s Setup k8s cluster"
 
 # Controls when the workflow will run
 on:
@@ -83,7 +83,7 @@ jobs:
           fi      
 
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 1️⃣  把 Runner 接入 tailnet
       - name: setup Tailscale Connect (if needed)

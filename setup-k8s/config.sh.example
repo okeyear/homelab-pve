@@ -1,0 +1,14 @@
+CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
+K8S_VERSION=${K8S_VERSION:-1.34.1}
+POD_CIDR=10.244.0.0/16
+SERVICE_CIDR=10.96.0.0/12
+NODE_PORT_RANGE=30000-32767
+IMAGE_REPO=registry.aliyuncs.com/google_containers
+MASTER_NODES=("10.10.10.11")
+LoadBalancer='10.10.10.10'
+WORKER_NODES=("10.10.10.101" "10.10.10.102")
+NODE_USER=vagrant
+SSH_KEY_PATH=~/.ssh/id_rsa
+NETWORK_PLUGIN="calico"  # 可选 calico、flannel、weave
+# enable metallb for LoadBalancer service type
+ENABLE_METALLB=false

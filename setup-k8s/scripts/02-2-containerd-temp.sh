@@ -1,0 +1,54 @@
+#!/bin/bash
+k8sver=1.34.1
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+cd "${SCRIPT_DIR}"
+source ./functions.sh
+
+color_echo "Installing Containerd..."
+
+
+export containerd_ver=$(get_github_latest_release containerd/containerd)
+# curl -SLO https://github.com/containerd/containerd/releases/download/$containerd_ver/containerd-${containerd_ver/v/}-linux-amd64.tar.gz
+containerd_ver=${containerd_ver/v/}
+
+wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
+
+# unzip the containerd
+sudo tar -C /usr/local -xf containerd-${containerd_ver/v/}-linux-amd64.tar.gz
+
+# systemd服务脚本
+# https://github.com/containerd/containerd/blob/main/containerd.service
+sudo mkdir -pv /usr/local/lib/systemd/system
+sudo curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /usr/local/lib/systemd/system/containerd.service > /dev/null 2>&1
+
+# sudo apt install runc
+
+runc_ver=$(get_github_latest_release opencontainers/runc)
+curl -sSLO ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
+sudo install -m 755 runc.amd64 /usr/local/sbin/runc
+
+runc -v
+
+# download cni
+# https://github.com/containernetworking/plugins/releases
+cni_ver=$(get_github_latest_release containernetworking/plugins)
+wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
+
+sudo mkdir -p /opt/cni/bin  
+sudo tar -xzf cni-plugins-linux-amd64-${cni_ver}.tgz -C /opt/cni/bin  
+
+# create default config
+[ -d /etc/containerd ] || sudo mkdir /etc/containerd
+sudo /usr/local/bin/containerd config default | sudo tee /etc/containerd/config.toml > /dev/null 2>&1
+
+# 国内
+if [ "${REGION}X" = "CNX" ]; then
+    sudo sed -i 's@registry.k8s.io@registry.cn-hangzhou.aliyuncs.com/google_containers@' /etc/containerd/config.toml
+fi
+# 内网
+# sudo sed -i 's@registry.k8s.io/pause:[0-9.]*@harbor.tscop.net/google_containers/pause:latest@' /etc/containerd/config.toml
+grep pause /etc/containerd/config.toml
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now containerd.service

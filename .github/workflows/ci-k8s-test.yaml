@@ -1,4 +1,4 @@
-name: "[ 00 ] Kind-CI"
+name: "[ 00 ] ci-k8s test Kind-CI"
 
 on:
   # push:

@@ -1,4 +1,4 @@
-name: "[ 01 ] Setup VM templates"
+name: "[ 01 ] Setup VM template"
 
 on:
   workflow_dispatch:
