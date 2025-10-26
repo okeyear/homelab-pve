@@ -73,8 +73,8 @@ ip_vs
 ip_vs_rr
 ip_vs_wrr
 ip_vs_sh
-# nf_conntrack_ipv4
 EOF
+# nf_conntrack_ipv4
 # 加载
 for x in `cat /etc/modules-load.d/ipvs.conf`; do
     sudo modprobe $x
