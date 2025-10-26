@@ -11,8 +11,8 @@ if [ -s "${SCRIPT_DIR}/config.sh" ]; then
 fi
 
 # download pkgs
-[ -d pkgs ] || mkdir pkg
-cd pkg
+[ -d pkgs ] || mkdir pkgs
+cd pkgs
 containerd_ver=$(get_github_latest_release containerd/containerd)
 wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/${containerd_ver}/containerd-${containerd_ver/v/}-linux-amd64.tar.gz"
 wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
