@@ -159,6 +159,7 @@ jobs:
           NODE_PORT_RANGE=30000-32767
           IMAGE_REPO=registry.aliyuncs.com/google_containers
           MASTER_NODES=($MASTER_NODES)
+          LoadBalancer=($MASTER_NODES)
           WORKER_NODES=($WORKER_NODES)
           NODE_USER=${VM_USER}
           SSH_KEY_PATH=~/.ssh/id_rsa
