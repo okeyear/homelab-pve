@@ -149,7 +149,7 @@ jobs:
         run: |
           MASTER_NODES=$(echo "$VMs" | jq -r '.[0]')
           WORKER_NODES=$(echo "$VMs" | jq -r '.[1:] | join(" ")')
-          tee setup-k8s/config.sh <EOF
+          tee setup-k8s/config.sh <<EOF
           CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
           K8S_VERSION=${K8S_VERSION:-1.34.1}
           POD_CIDR=10.244.0.0/16
