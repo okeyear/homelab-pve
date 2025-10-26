@@ -41,6 +41,7 @@ env:
 jobs:
   # This workflow contains a single job called "build"
   setup:
+    name: 🚀 Deploy k3s
     # The type of runner that the job will run on
     runs-on: ${{ github.event.inputs.runner }}
     # runs-on: [self-hosted]

@@ -70,6 +70,7 @@ env:
 jobs:
   # This workflow contains a single job called "build"
   setup-vms:
+    name: 🚀 Create VMs for ${{ github.event.inputs.vm_prefix }}
     # The type of runner that the job will run on
     runs-on: ${{ github.event.inputs.runner }}
     # runs-on: [self-hosted]

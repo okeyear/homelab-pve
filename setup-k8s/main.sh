@@ -25,31 +25,31 @@ cd -
 # install base packages, containerd, kubelet, kubeadm, kubectl on all nodes
 for NODE in "${MASTER_NODES[@]}" "${WORKER_NODES[@]}"; do
 
-    rsync -avh --progress ../setup-k8s "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
+    rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ../setup-k8s "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
 
     color_echo "Setting up base packages on node: ${NODE}"
-    ssh "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/01-base-pkgs.sh'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/01-base-pkgs.sh'
 
     # color_echo "Installing containerd on node: ${NODE}"
-    ssh "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/02-2-containerd.sh'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/02-2-containerd.sh'
 
     color_echo "Installing kubelet, kubectl, kubeadm on node: ${NODE}"
-    ssh "${NODE_USER}@${NODE}" "k8sver=v${K8S_VERSION%.*} bash /tmp/setup-k8s/scripts/03-kubelet.sh"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" "k8sver=v${K8S_VERSION%.*} bash /tmp/setup-k8s/scripts/03-kubelet.sh"
 
 done
 
 # initialize the first master node
 for NODE in "${MASTER_NODES[0]}"; do
     color_echo "kubeadm init on node: ${NODE}"
-    ssh "${NODE_USER}@${NODE}" "MASTER_NODES=$(echo ${MASTER_NODES[@]} | sed 's!\s!,!g') VIP=${LoadBalancer} POD_CIDR=${POD_CIDR} SERVICE_CIDR=${SERVICE_CIDR} bash /tmp/setup-k8s/scripts/04-kubeadm-init.sh"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" "MASTER_NODES=$(echo ${MASTER_NODES[@]} | sed 's!\s!,!g') VIP=${LoadBalancer} POD_CIDR=${POD_CIDR} SERVICE_CIDR=${SERVICE_CIDR} bash /tmp/setup-k8s/scripts/04-kubeadm-init.sh"
     # ssh "${NODE_USER}@${NODE}" "POD_CIDR=${POD_CIDR} SERVICE_CIDR=${SERVICE_CIDR} VIP=${LoadBalancer} bash /tmp/setup-k8s/scripts/05-k8s-master.sh"
     sleep 5
-    ssh "${NODE_USER}@${NODE}" "sudo kubeadm token create --print-join-command" | tee ./scripts/07-k8s-worker.sh
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" "sudo kubeadm token create --print-join-command" | tee ./scripts/07-k8s-worker.sh
 done
 
-# # worker join and additional master join
-# for NODE in "${WORKER_NODES[@]}"; do
-#     color_echo "Joining node to cluster: ${NODE}"
-#     rsync -avh --progress ./scripts "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
-#     ssh "${NODE_USER}@${NODE}" "sudo bash /tmp/setup-k8s/scripts/07-k8s-worker.sh"
-# done
+# worker join and additional master join
+for NODE in "${WORKER_NODES[@]}"; do
+    color_echo "Joining node to cluster: ${NODE}"
+    rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./scripts "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" "sudo bash /tmp/setup-k8s/scripts/07-k8s-worker.sh"
+done
