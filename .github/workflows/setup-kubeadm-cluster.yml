@@ -124,7 +124,7 @@ jobs:
         shell: bash -el {0}
         run: |
           source setup-k8s/scripts/functions.sh
-          mkdir /tmp/containerd
+          [ -d /tmp/containerd ] || mkdir /tmp/containerd
           wget "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz" -O /tmp/containerd/containerd-${containerd_ver}-linux-amd64.tar.gz
           curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /tmp/containerd/containerd.service
 
