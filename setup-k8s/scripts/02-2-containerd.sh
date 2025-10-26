@@ -26,7 +26,7 @@ sudo tar -C /usr/local -xf containerd-${containerd_ver/v/}-linux-amd64.tar.gz
 sudo mkdir -pv /usr/local/lib/systemd/system
 [ -s containerd.service ] || sudo wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
 
-cp containerd.service /usr/local/lib/systemd/system/containerd.service
+sudo cp containerd.service /usr/local/lib/systemd/system/containerd.service
 
 # sudo apt install runc
 
