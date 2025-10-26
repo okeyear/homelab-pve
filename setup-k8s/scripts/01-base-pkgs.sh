@@ -29,7 +29,7 @@ fi
 
 
 sudo sed -ri 's/^pool.*/#&/' /etc/chrony.conf
-cat >> /etc/chrony.conf << EOF
+sudo tee /etc/chrony.conf << EOF
 pool ntp1.aliyun.com iburst
 EOF
 sudo systemctl restart chronyd
