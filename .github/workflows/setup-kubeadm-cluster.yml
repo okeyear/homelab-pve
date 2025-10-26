@@ -113,7 +113,7 @@ jobs:
           path: /tmp/containerd
           key: containerd-${containerd_ver}
 
-      - name: Download cos-cli (if cache miss)
+      - name: Download containerd (if cache miss)
         if: steps.cache-containerd.outputs.cache-hit != 'true'
         shell: bash -el {0}
         run: |
