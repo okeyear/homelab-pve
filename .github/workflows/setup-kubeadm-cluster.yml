@@ -164,3 +164,7 @@ jobs:
           EOF
 
           rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+      - name: setup k8s cluster via kubeadm
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup-k8s/main.sh"          
