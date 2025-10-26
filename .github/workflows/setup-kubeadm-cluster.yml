@@ -102,6 +102,9 @@ jobs:
 
       - name: Get containerd version
         run: |
+          pwd
+          ls 
+          ls setup-k8s/scripts
           source setup-k8s/scripts/functions.sh
           containerd_ver=$(get_github_latest_release containerd/containerd)
           echo "containerd_ver=${containerd_ver}" >> $GITHUB_ENV
