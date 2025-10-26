@@ -120,20 +120,33 @@ jobs:
           key: containerd-${containerd_ver}
 
       - name: Download containerd (if cache miss)
-        if: steps.cache-containerd.outputs.cache-hit != 'true'
+        if: steps.cache-containerd.outputs.cache-hit == 'true'
         shell: bash -el {0}
         run: |
           source setup-k8s/scripts/functions.sh
           mkdir /tmp/containerd
           wget "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz" -O /tmp/containerd/containerd-${containerd_ver}-linux-amd64.tar.gz
+          curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /tmp/containerd/containerd.service
+
+          runc_ver=$(get_github_latest_release opencontainers/runc)
+          echo "runc_ver=${runc_ver}" >> $GITHUB_ENV
+          wget ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64 -O /tmp/containerd/runc.amd64
+
+          cni_ver=$(get_github_latest_release containernetworking/plugins)
+          echo "cni_ver=${cni_ver}" >> $GITHUB_ENV
+          wget ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz -O /tmp/containerd/cni-plugins-linux-amd64-${cni_ver}.tgz
+          
           ls /tmp/containerd
 
-      # - name: Get k8s version
-      #   run: |
-      #     K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
-      #     echo "k8s version: $K8S_VERSION"
-      #     echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
+      - name: Get k8s version
+        run: |
+          K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
+          echo "k8s version: $K8S_VERSION"
+          echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
 
-      # - name: Sync scripts
-      #   run: |
-      #     rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+      - name: Sync scripts
+        run: |
+          cp -r /tmp/containerd setup-k8s/
+
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
