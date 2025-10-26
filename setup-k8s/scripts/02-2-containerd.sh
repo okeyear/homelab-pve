@@ -10,6 +10,7 @@ if command -v containerd >/dev/null 2>&1; then
     color_echo "Containerd is already installed."
     exit 0
 fi
+
 cd /tmp/setup-k8s/pkgs/
 containerd_ver=$(get_github_latest_release containerd/containerd)
 # curl -SLO https://github.com/containerd/containerd/releases/download/$containerd_ver/containerd-${containerd_ver/v/}-linux-amd64.tar.gz
