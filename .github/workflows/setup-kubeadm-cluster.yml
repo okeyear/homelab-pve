@@ -100,12 +100,34 @@ jobs:
           version: latest # https://pkgs.tailscale.com/stable/#static
           use-cache: 'true'
 
-      - name: Get k8s version
+      - name: Get containerd version
         run: |
-          K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
-          echo "k8s version: $K8S_VERSION"
-          echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
+          source setup-k8s/scripts/functions.sh
+          containerd_ver=$(get_github_latest_release containerd/containerd)
+          echo "containerd_ver=${containerd_ver}" >> $GITHUB_ENV
 
-      - name: Sync scripts
+      - name: Cache containerd
+        id:   cache-containerd
+        uses: actions/cache@v4
+        with:
+          path: /tmp/containerd
+          key: containerd-${containerd_ver}
+
+      - name: Download cos-cli (if cache miss)
+        if: steps.cache-containerd.outputs.cache-hit != 'true'
+        shell: bash -el {0}
         run: |
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          source setup-k8s/scripts/functions.sh
+          mkdir /tmp/containerd
+          wget "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz" -O /tmp/containerd/containerd-${containerd_ver}-linux-amd64.tar.gz
+          ls /tmp/containerd
+
+      # - name: Get k8s version
+      #   run: |
+      #     K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
+      #     echo "k8s version: $K8S_VERSION"
+      #     echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
+
+      # - name: Sync scripts
+      #   run: |
+      #     rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
