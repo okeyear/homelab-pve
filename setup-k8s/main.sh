@@ -14,7 +14,7 @@ fi
 [ -d pkgs ] || mkdir pkg
 cd pkg
 containerd_ver=$(get_github_latest_release containerd/containerd)
-wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
+wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/${containerd_ver}/containerd-${containerd_ver/v/}-linux-amd64.tar.gz"
 wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
 runc_ver=$(get_github_latest_release opencontainers/runc)
 wget -c ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
