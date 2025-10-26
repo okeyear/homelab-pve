@@ -11,9 +11,9 @@ if command -v containerd >/dev/null 2>&1; then
     exit 0
 fi
 cd /tmp/setup-k8s/pkgs/
-export containerd_ver=$(get_github_latest_release containerd/containerd)
+containerd_ver=$(get_github_latest_release containerd/containerd)
 # curl -SLO https://github.com/containerd/containerd/releases/download/$containerd_ver/containerd-${containerd_ver/v/}-linux-amd64.tar.gz
-containerd_ver=${containerd_ver/v/}
+export containerd_ver=${containerd_ver/v/}
 
 [ -s containerd-${containerd_ver}-linux-amd64.tar.gz ] || wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
 
