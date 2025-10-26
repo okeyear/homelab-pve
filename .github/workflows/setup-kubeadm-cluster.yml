@@ -109,7 +109,7 @@ jobs:
           containerd_ver=$(get_github_latest_release containerd/containerd)
           echo ${containerd_ver}
           containerd_ver=${containerd_ver/v/}
-          ${containerd_ver}
+          echo ${containerd_ver}
           echo "containerd_ver=${containerd_ver}" >> $GITHUB_ENV
 
       - name: Cache containerd
