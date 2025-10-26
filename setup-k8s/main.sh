@@ -10,10 +10,22 @@ if [ -s "${SCRIPT_DIR}/config.sh" ]; then
     source "${SCRIPT_DIR}/config.sh"
 fi
 
+# download pkgs
+[ -d pkgs ] || mkdir pkg
+cd pkg
+containerd_ver=$(get_github_latest_release containerd/containerd)
+wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
+wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+runc_ver=$(get_github_latest_release opencontainers/runc)
+wget -c ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
+cni_ver=$(get_github_latest_release containernetworking/plugins)
+wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
+cd -
+
 # install base packages, containerd, kubelet, kubeadm, kubectl on all nodes
 for NODE in "${MASTER_NODES[@]}" "${WORKER_NODES[@]}"; do
 
-    rsync -avh --progress ./scripts "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
+    rsync -avh --progress ../setup-k8s "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
 
     color_echo "Setting up base packages on node: ${NODE}"
     ssh "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/01-base-pkgs.sh'

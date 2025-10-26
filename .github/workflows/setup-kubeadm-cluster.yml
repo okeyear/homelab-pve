@@ -23,7 +23,7 @@ on:
         type: choice
         options:
           - vagrant
-          - root      
+          - root
 
       VMs:
         description: 'VM list JSON array'
@@ -100,43 +100,43 @@ jobs:
           version: latest # https://pkgs.tailscale.com/stable/#static
           use-cache: 'true'
 
-      - name: Get containerd version
-        run: |
-          # pwd
-          # ls 
-          # ls setup-k8s/scripts
-          source setup-k8s/scripts/functions.sh
-          containerd_ver=$(get_github_latest_release containerd/containerd)
-          # echo ${containerd_ver}
-          containerd_ver=${containerd_ver/v/}
-          # echo ${containerd_ver}
-          echo "containerd_ver=${containerd_ver}" >> $GITHUB_ENV
+      # - name: Get containerd version
+      #   run: |
+      #     # pwd
+      #     # ls 
+      #     # ls setup-k8s/scripts
+      #     source setup-k8s/scripts/functions.sh
+      #     containerd_ver=$(get_github_latest_release containerd/containerd)
+      #     # echo ${containerd_ver}
+      #     containerd_ver=${containerd_ver/v/}
+      #     # echo ${containerd_ver}
+      #     echo "containerd_ver=${containerd_ver}" >> $GITHUB_ENV
 
-      - name: Cache containerd
-        id:   cache-containerd
-        uses: actions/cache@v4
-        with:
-          path: /tmp/containerd
-          key: containerd-${containerd_ver}
+      # - name: Cache containerd
+      #   id:   cache-containerd
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: /tmp/containerd
+      #     key: containerd-${containerd_ver}
 
-      - name: Download containerd (if cache miss)
-        if: steps.cache-containerd.outputs.cache-hit == 'true'
-        shell: bash -el {0}
-        run: |
-          source setup-k8s/scripts/functions.sh
-          [ -d /tmp/containerd ] || mkdir /tmp/containerd
-          wget "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz" -O /tmp/containerd/containerd-${containerd_ver}-linux-amd64.tar.gz
-          curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /tmp/containerd/containerd.service
+      # - name: Download containerd (if cache miss)
+      #   if: steps.cache-containerd.outputs.cache-hit == 'true'
+      #   shell: bash -el {0}
+      #   run: |
+      #     source setup-k8s/scripts/functions.sh
+      #     [ -d /tmp/containerd ] || mkdir /tmp/containerd
+      #     wget "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz" -O /tmp/containerd/containerd-${containerd_ver}-linux-amd64.tar.gz
+      #     curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /tmp/containerd/containerd.service
 
-          runc_ver=$(get_github_latest_release opencontainers/runc)
-          echo "runc_ver=${runc_ver}" >> $GITHUB_ENV
-          wget ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64 -O /tmp/containerd/runc.amd64
+      #     runc_ver=$(get_github_latest_release opencontainers/runc)
+      #     echo "runc_ver=${runc_ver}" >> $GITHUB_ENV
+      #     wget ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64 -O /tmp/containerd/runc.amd64
 
-          cni_ver=$(get_github_latest_release containernetworking/plugins)
-          echo "cni_ver=${cni_ver}" >> $GITHUB_ENV
-          wget ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz -O /tmp/containerd/cni-plugins-linux-amd64-${cni_ver}.tgz
+      #     cni_ver=$(get_github_latest_release containernetworking/plugins)
+      #     echo "cni_ver=${cni_ver}" >> $GITHUB_ENV
+      #     wget ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz -O /tmp/containerd/cni-plugins-linux-amd64-${cni_ver}.tgz
           
-          ls /tmp/containerd
+      #     ls /tmp/containerd
 
       - name: Get k8s version
         run: |
@@ -147,6 +147,19 @@ jobs:
 
       - name: Sync scripts
         run: |
-          cp -r /tmp/containerd setup-k8s/
+          MASTER_NODES=$(echo "$VMs" | jq -r '.[0]')
+          WORKER_NODES=$(echo "$VMs" | jq -r '.[1:] | join(" ")')
+          tee > setup-k8s/config.sh <EOF
+          CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
+          K8S_VERSION=${K8S_VERSION:-1.34.1}
+          POD_CIDR=10.244.0.0/16
+          SERVICE_CIDR=10.96.0.0/12
+          NODE_PORT_RANGE=30000-32767
+          IMAGE_REPO=registry.aliyuncs.com/google_containers
+          MASTER_NODES=($MASTER_NODES)
+          WORKER_NODES=($WORKER_NODES)
+          NODE_USER=${VM_USER}
+          SSH_KEY_PATH=~/.ssh/id_rsa
+          EOF
 
           rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/

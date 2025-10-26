@@ -10,12 +10,12 @@ if command -v containerd >/dev/null 2>&1; then
     color_echo "Containerd is already installed."
     exit 0
 fi
-
+cd /tmp/setup-k8s/pkgs/
 export containerd_ver=$(get_github_latest_release containerd/containerd)
 # curl -SLO https://github.com/containerd/containerd/releases/download/$containerd_ver/containerd-${containerd_ver/v/}-linux-amd64.tar.gz
 containerd_ver=${containerd_ver/v/}
 
-wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
+[ -s containerd-${containerd_ver}-linux-amd64.tar.gz ] || wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
 
 # unzip the containerd
 sudo tar -C /usr/local -xf containerd-${containerd_ver/v/}-linux-amd64.tar.gz
@@ -23,12 +23,14 @@ sudo tar -C /usr/local -xf containerd-${containerd_ver/v/}-linux-amd64.tar.gz
 # systemd服务脚本
 # https://github.com/containerd/containerd/blob/main/containerd.service
 sudo mkdir -pv /usr/local/lib/systemd/system
-sudo curl ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -o /usr/local/lib/systemd/system/containerd.service > /dev/null 2>&1
+[ -s containerd.service ] || sudo wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+
+cp containerd.service /usr/local/lib/systemd/system/containerd.service
 
 # sudo apt install runc
 
 runc_ver=$(get_github_latest_release opencontainers/runc)
-curl -sSLO ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
+[ -s runc.amd64 ] || wget -c ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
 sudo install -m 755 runc.amd64 /usr/local/sbin/runc
 
 runc -v
@@ -36,7 +38,7 @@ runc -v
 # download cni
 # https://github.com/containernetworking/plugins/releases
 cni_ver=$(get_github_latest_release containernetworking/plugins)
-wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
+[ -s cni-plugins-linux-amd64-${cni_ver}.tgz ] || wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
 
 sudo mkdir -p /opt/cni/bin  
 sudo tar -xzf cni-plugins-linux-amd64-${cni_ver}.tgz -C /opt/cni/bin  
