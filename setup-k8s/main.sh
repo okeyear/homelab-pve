@@ -25,7 +25,7 @@ cd -
 # install base packages, containerd, kubelet, kubeadm, kubectl on all nodes
 for NODE in "${MASTER_NODES[@]}" "${WORKER_NODES[@]}"; do
 
-    rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ../setup-k8s "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
+    rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ../setup-k8s "${NODE_USER}@${NODE}:/tmp/"
 
     color_echo "Setting up base packages on node: ${NODE}"
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" 'bash /tmp/setup-k8s/scripts/01-base-pkgs.sh'
