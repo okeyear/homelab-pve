@@ -6,10 +6,10 @@ source ./functions.sh
 
 color_echo "Installing Containerd..."
 
-if command -v containerd >/dev/null 2>&1; then
-    color_echo "Containerd is already installed."
-    exit 0
-fi
+# if command -v containerd >/dev/null 2>&1; then
+#     color_echo "Containerd is already installed."
+#     exit 0
+# fi
 
 cd /tmp/setup-k8s/pkgs/
 containerd_ver=$(get_github_latest_release containerd/containerd)
