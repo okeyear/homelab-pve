@@ -50,6 +50,7 @@ env:
   # MASTER_IP: 10.10.10.11
   # NODE01_IP: 10.10.10.101
   # NODE02_IP: 10.10.10.102
+  VMs: ${{ github.event.inputs.VMs }}
   VM_USER: ${{ github.event.inputs.vm_user }}
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -151,7 +152,7 @@ jobs:
           WORKER_NODES=$(echo "$VMs" | jq -r '.[1:] | join(" ")')
           tee setup-k8s/config.sh <<EOF
           CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
-          K8S_VERSION=${K8S_VERSION:-1.34.1}
+          K8S_VERSION=${K8S_VERSION}
           POD_CIDR=10.244.0.0/16
           SERVICE_CIDR=10.96.0.0/12
           NODE_PORT_RANGE=30000-32767
