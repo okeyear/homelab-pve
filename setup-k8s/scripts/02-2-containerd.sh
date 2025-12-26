@@ -63,14 +63,20 @@ sudo systemctl restart containerd.service
 
 
 ############## containerd配置自己加速地址
-sudo mkdir -pv /etc/containerd/certs.d/docker.io
+grep -C1 /etc/containerd/certs.d /etc/containerd/config.toml
 
+sudo mkdir -pv /etc/containerd/certs.d/docker.io
 sudo tee /etc/containerd/certs.d/docker.io/hosts.toml << EOF
-server = "http://10.10.10.1:5000"
+server = "https://registry-1.docker.io" # 默认的官方仓库地址
 [host."http://10.10.10.1:5000"]
   capabilities = ["pull", "resolve"]
   skip_verify = true
   skip_tls_verify = true
+# 关键：最后回退到官方源，确保在加速器失效时仍能拉取镜像
+[host."https://registry-1.docker.io"]
+  capabilities = ["pull", "resolve"]
 EOF
 
+sudo systemctl restart containerd
 
+/usr/local/bin/ctr images pull  docker.io/library/busybox:latest --hosts-dir /etc/containerd/certs.d
