@@ -54,3 +54,6 @@ fi
 echo | openssl s_client -connect ${MASTER_NODES[0]}:6443 -servername kubernetes 2>/dev/null | \
 openssl x509 -noout -text | \
 grep -A1 'Subject Alternative Name'
+
+[ -d ~/.kube ] ||  mkdir ~/.kube
+cp /etc/kubernetes/admin.conf ~/.kube/config
