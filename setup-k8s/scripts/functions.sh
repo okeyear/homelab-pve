@@ -38,7 +38,7 @@ REGION=$(curl -s ipinfo.io| grep -oP '(?<=country": ").*?(?=",)')
 
 if [ "${REGION}X" = "CNX" ]; then
     color_echo "Your IP is in China $REGION, will using China resource."
-    export GHPROXY='https://ghfast.top/'
+    export GHPROXY="${GHPROXY:-https://ghfast.top/}"
     # 备注: 地址可以用咱们的或者从https://ghproxy.link/找一个
     # 备注: 地址可以用咱们的或者从https://dockerproxy.link/找一个
     export BINPROXY='files.m.daocloud.io/'
