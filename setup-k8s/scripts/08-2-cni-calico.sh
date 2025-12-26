@@ -19,5 +19,8 @@ curl -O https://raw.githubusercontent.com/projectcalico/calico/${calico_ver}/man
 
 sed -i.bak '/# \- name: CALICO_IPV4POOL_CIDR/a\            - name: CALICO_IPV4POOL_CIDR\n              value: "10.244.0.0/16"' calico.yaml
 
+sed -i 's@image: quay.io/calico/@image: registry.cn-beijing.aliyuncs.com/my-dockermirrors/@g'  calico.yaml
+
 # sed -i 's@docker.io@harbor.tscop.net/dockerhub@g' calico.${calico_ver}.yaml
 kubectl apply -f calico.yaml
+
