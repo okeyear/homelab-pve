@@ -59,3 +59,24 @@ grep pause /etc/containerd/config.toml
 sudo systemctl daemon-reload
 sudo systemctl enable --now containerd.service
 sudo systemctl restart containerd.service
+
+
+
+############## containerd配置自己加速地址
+# sudo mkdir -pv /etc/k0s/containerd.d/certs.d/docker.io
+
+# sudo tee /etc/k0s/containerd.d/cri-registry.toml <<EOF
+# version = 2
+
+# [plugins."io.containerd.grpc.v1.cri".registry]
+# config_path = "/etc/k0s/containerd.d/certs.d"
+# EOF
+
+
+# sudo tee /etc/k0s/containerd.d/certs.d/docker.io/hosts.toml << EOF
+# server = "http://10.10.10.1:5000"
+# [host."http://10.10.10.1:5000"]
+#   capabilities = ["pull", "resolve"]
+#   skip_verify = true
+#   skip_tls_verify = true
+# EOF
