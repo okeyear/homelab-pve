@@ -303,7 +303,7 @@ jobs:
           qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
           # el9需要设置CPU为host
-          [ "${almalinux_ver}" -eq "9" ] && qm set $VM_ID --cpu cputype=host
+          [ "${almalinux_ver}" -ge "9" ] && qm set $VM_ID --cpu cputype=host
 
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
