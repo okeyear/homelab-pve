@@ -287,7 +287,7 @@ jobs:
           sleep 2
           qm destroy ${VM_ID} --purge
 
-          qm create $VM_ID --core 2 --memory 4096 --name almalinux9tpl --net0 virtio,bridge=vmbr1
+          qm create $VM_ID --core 2 --memory 4096 --name almalinux${almalinux_ver}tpl --net0 virtio,bridge=vmbr1
           qm importdisk $VM_ID AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2 ${STORAGE}
           # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
           # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
