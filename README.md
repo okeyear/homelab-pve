@@ -1,6 +1,11 @@
 # homelab-pve
 PVE with Github runner, build HomeLab Environment
 
+```shell
+# 只为 GitHub 设置代理
+git config http.https://github.com.proxy http://127.0.0.1:38457
+```
+
 ## IP和网段
 PVE默认是vmbr0， 新建一个vmbr1,设置为10.10.10.0/24
 
