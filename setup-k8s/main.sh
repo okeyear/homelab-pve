@@ -53,3 +53,5 @@ for NODE in "${WORKER_NODES[@]}"; do
     rsync --no-perms --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./scripts "${NODE_USER}@${NODE}:/tmp/setup-k8s/"
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null  "${NODE_USER}@${NODE}" "sudo bash /tmp/setup-k8s/scripts/07-k8s-worker.sh"
 done
+
+# todo: which cni plugin to use
