@@ -158,7 +158,7 @@ jobs:
           cat ${SETUP_DEBIAN_SCRIPT}
 
           # copy scripts to PVE
-          for pkg in setup_debian*.sh
+          for pkg in setup_debian_tpl.sh ${SETUP_DEBIAN_SCRIPT}
           do
             rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
               -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
