@@ -89,13 +89,13 @@ jobs:
         if: contains(github.event.inputs.OS, 'debian')
         run: |
           echo setup Debian script ...
-          if contains(github.event.inputs.OS, 'debian13'); then
+          if [ "${{ github.event.inputs.OS }}" = "debian13" ]; then
             DEBIAN_VERSION=13 ; DEBIAN_NAME='trixie'
             SETUP_DEBIAN_SCRIPT=setup_debian_ge_13.sh
-          elif contains(github.event.inputs.OS, 'debian12'); then
+          elif [ "${{ github.event.inputs.OS }}" = "debian12" ]; then
             DEBIAN_VERSION=12 ; DEBIAN_NAME='bookworm'
             SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh
-          elif contains(github.event.inputs.OS, 'debian11'); then
+          elif [ "${{ github.event.inputs.OS }}" = "debian11" ]; then
             DEBIAN_VERSION=11 ; DEBIAN_NAME='Bullseye'   
             SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh        
           fi
