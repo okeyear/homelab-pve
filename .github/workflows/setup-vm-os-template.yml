@@ -22,6 +22,7 @@ on:
           - ubuntu22.04
           - debian13
           - debian12
+          - debian11
           - almalinux10
           - almalinux9
           - almalinux8
@@ -88,7 +89,85 @@ jobs:
         if: contains(github.event.inputs.OS, 'debian')
         run: |
           echo setup Debian script ...
+          if contains(github.event.inputs.OS, 'debian13'); then
+            DEBIAN_VERSION=13 ; DEBIAN_NAME='trixie'
+            SETUP_DEBIAN_SCRIPT=setup_debian_ge_13.sh
+          elif contains(github.event.inputs.OS, 'debian12'); then
+            DEBIAN_VERSION=12 ; DEBIAN_NAME='bookworm'
+            SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh
+          elif contains(github.event.inputs.OS, 'debian11'); then
+            DEBIAN_VERSION=11 ; DEBIAN_NAME='Bullseye'   
+            SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh        
+          fi
+          VM_ID=21${DEBIAN_VERSION}
+          echo "DEBIAN_VERSION=$DEBIAN_VERSION"      >> "$GITHUB_ENV"
+          echo "DEBIAN_NAME=$DEBIAN_NAME"      >> "$GITHUB_ENV"
+          echo "VM_ID=$VM_ID"      >> "$GITHUB_ENV"
+          echo "SETUP_DEBIAN_SCRIPT=$SETUP_DEBIAN_SCRIPT"      >> "$GITHUB_ENV"
 
+          cat > setup_debian_le_12.sh <<'EOF'
+          sudo sed -i 's|^deb http://ftp.debian.org|deb https://mirrors.ustc.edu.cn|g' /etc/apt/sources.list
+          sudo sed -i 's|^deb http://security.debian.org|deb https://mirrors.ustc.edu.cn/debian-security|g' /etc/apt/sources.list
+          EOF
+
+          cat > setup_debian_ge_13.sh <<'EOF'
+          echo https://mirrors.ustc.edu.cn/debian-security > /etc/apt/mirrors/debian-security.list
+          echo http://mirrors.tencent.com/debian > /etc/apt/mirrors/debian.list
+          EOF
+      - name: Setup Debian ${{ github.event.inputs.OS }} Template
+        if: contains(github.event.inputs.OS, 'debian')
+        run: |
+          echo setup ${{ github.event.inputs.OS }} ...
+          cat > setup_debian_tpl.sh <<EOF
+          wget -c https://cloud.debian.org/images/cloud/${DEBIAN_NAME}/latest/debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2
+
+          # disk
+          qemu-img resize debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2 20G
+          # qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+
+          qm create $VM_ID --core 2 --memory 4096 --name debian${DEBIAN_VERSION}tpl --net0 virtio,bridge=vmbr1
+          qm importdisk $VM_ID debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2 ${STORAGE}
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0 # ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw # 
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
+          qm set $VM_ID --ide2 ${STORAGE}:cloudinit
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+          qm set $VM_ID --serial0 socket --vga serial0
+          # 修改国内源等,参考修改脚本
+          # ssh免密钥, 用vagrant的即可,生产环境不合适
+          # sudo curl -o /home/vagrant/.ssh/authorized_keys https://raw.githubusercontent.com/hashicorp/vagrant/master/keys/vagrant.pub
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+
+          qm start $VM_ID    
+          sleep 45
+
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace ${SETUP_DEBIAN_SCRIPT} vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 "bash ${SETUP_DEBIAN_SCRIPT}"
+          EOF
+          cat ${SETUP_DEBIAN_SCRIPT}
+
+          # copy scripts to PVE
+          for pkg in setup_debian*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_debian_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"                
+          
       - name: Setup Ubuntu script
         # if: github.event.inputs.OS == 'ubuntu2404'
         if: contains(github.event.inputs.OS, 'ubuntu')
