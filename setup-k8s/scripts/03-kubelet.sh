@@ -41,6 +41,7 @@ gpgkey=${K8S_MIRROR}/${k8sver}/rpm/repodata/repomd.xml.key
 exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
 EOF
     sudo yum install -yq --nogpgcheck kubelet kubeadm kubectl cri-tools kubernetes-cni --disableexcludes=kubernetes
+    sudo systemctl enable kubelet
 else
     echo "Unsupported OS: $ID"
     exit 1
