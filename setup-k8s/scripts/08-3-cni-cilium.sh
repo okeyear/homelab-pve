@@ -24,25 +24,26 @@ helm template cilium cilium-${ChartVersion}.tgz \
 
 MIRRORS='registry.cn-beijing.aliyuncs.com/my-dockermirrors'
 # https://docs.cilium.io/en/stable/helm-reference/
-# helm upgrade cilium cilium-${ChartVersion}.tgz \
-#     --namespace kube-system \
-#     --reset-values \
-#     --set image.repository=${MIRRORS}/cilium \
-#     --set envoy.image.repository=${MIRRORS}/cilium-envoy \
-#     --set ingressController.enabled=true \
-#     --set ingressController.loadbalancerMode=dedicated \
-#     --set kubeProxyReplacement=true \
-#     --set l7Proxy=true \
-#     --set operator.replicas=1 \
-#     --set ipam.mode=kubernetes
-
-helm template cilium cilium-${ChartVersion}.tgz \
+helm upgrade cilium cilium-${ChartVersion}.tgz \
+    --install \
     --namespace kube-system \
+    --reset-values \
+    --set image.repository=${MIRRORS}/cilium \
+    --set envoy.image.repository=${MIRRORS}/cilium-envoy \
     --set ingressController.enabled=true \
     --set ingressController.loadbalancerMode=dedicated \
     --set kubeProxyReplacement=true \
     --set l7Proxy=true \
     --set operator.replicas=1 \
-    --set ipam.mode=kubernetes | \
-    sed "s@quay.io/cilium@${MIRRORS}@g" | \
-    sed 's/@sha256:[a-f0-9]\{64\}//g' | kubectl apply -f -
+    --set ipam.mode=kubernetes
+
+# helm template cilium cilium-${ChartVersion}.tgz \
+#     --namespace kube-system \
+#     --set ingressController.enabled=true \
+#     --set ingressController.loadbalancerMode=dedicated \
+#     --set kubeProxyReplacement=true \
+#     --set l7Proxy=true \
+#     --set operator.replicas=1 \
+#     --set ipam.mode=kubernetes | \
+#     sed "s@quay.io/cilium@${MIRRORS}@g" | \
+#     sed 's/@sha256:[a-f0-9]\{64\}//g' | kubectl apply -f -
