@@ -1,0 +1,71 @@
+version: "1.2"
+
+pipelines:
+  - name: install-tailscale
+    description: "安装 Tailscale 并设置 tag 为 ci"
+    jobs:
+      - name: setup-tailscale
+        runs-on:
+          - "${{ vars.RUNNER || 'linux' }}"
+        steps:
+          # ============================================
+          # 前置准备：确认环境
+          # ============================================
+          - name: 环境信息
+            run: |
+              echo "OS: $(uname -a)"
+              echo "Arch: $(uname -m)"
+
+          # ============================================
+          # 安装 Tailscale
+          # ============================================
+          - name: 安装 Tailscale
+            run: |
+              # 1. 添加 Tailscale GPG key 和仓库
+              curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+                | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
+              curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+                | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
+
+              # 2. 更新并安装
+              sudo apt-get update -y
+              sudo apt-get install -y tailscale
+
+              # 3. 验证安装
+              tailscale version
+
+          # ============================================
+          # 连接 Tailscale 并设置 tag
+          # ============================================
+          # 注意：TS_AUTHKEY 需要在仓库/组织的 CI/CD Variables 中配置
+          # 生成方式：https://login.tailscale.com/admin/settings/keys
+          # 建议使用 reusable key（可重复使用的认证密钥）
+          - name: 连接 Tailscale 并设置 tag
+            env:
+              TS_AUTHKEY: "${{ secrets.TS_AUTHKEY }}"
+              TS_TAGS: "tag:ci"
+            run: |
+              # 使用 authkey 登录并自动应用 tag
+              # --advertise-tags 需要事先在 Tailscale Admin Console 中
+              # 为该 authkey 配置允许的 tag（如 tag:ci）
+              sudo tailscale up \
+                --authkey="${TS_AUTHKEY}" \
+                --advertise-tags="${TS_TAGS}" \
+                --timeout=120s
+
+              # 验证连接状态
+              echo "--- Tailscale 状态 ---"
+              sudo tailscale status
+
+              echo "--- 本机 Tailscale IP ---"
+              sudo tailscale ip -4
+
+          # ============================================
+          # 可选：安装 tailscale CLI 工具（如需要额外操作）
+          # ============================================
+          # - name: Tailscale 网络操作示例
+          #   run: |
+          #     # 查看网络中的设备
+          #     sudo tailscale status
+          #     # Ping 某个设备（替换为实际主机名或 IP）
+          #     # sudo tailscale ping <hostname>
