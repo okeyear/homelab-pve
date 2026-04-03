@@ -4,11 +4,13 @@ main:
   # 事件名，push代表提交代码时出发
   push:
     # 流水线
-    - stages:
+    imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
+    stages:
       # 任务名字
       - name: hello cnb
         script: echo "hello cnb"
-
+      - name: debug
+        script: echo "$TS_AUTHKEY"
 # pipelines:
 #   - name: install-tailscale
 #     description: "安装 Tailscale 并设置 tag 为 ci"
