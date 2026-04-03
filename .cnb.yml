@@ -1,32 +1,34 @@
 version: "1.2"
 # 分支名
-main:
-  # 事件名，push代表提交代码时出发
-  push:
-    # 流水线
-    imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
-    stages:
-      # 任务名字
-      - name: hello cnb
-        script: echo "hello cnb"
-      - name: install-tailscale
-        script: |
-          echo "install tailscale"
-          # 1. 添加 Tailscale GPG key 和仓库
-          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
-            | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
-          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
-            | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
+main: # 触发分支：在 main 分支上触发
+  push: # 触发事件：代码推送时触发
+    - name: pipeline-1 # 流水线名称
+      imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
+      stages:
+        - name: stage-1 # 阶段名称
+          jobs:
+            - name: job-1 # 任务名称
+              script: echo "in pipeline-1"
+        - name: hello cnb
+          script: echo "hello cnb"
+        - name: install-tailscale
+          script: |
+            echo "install tailscale"
+            # 1. 添加 Tailscale GPG key 和仓库
+            curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+              | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
+            curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+              | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
 
-          # 2. 更新并安装
-          sudo apt-get update -y
-          sudo apt-get install -y tailscale
+            # 2. 更新并安装
+            sudo apt-get update -y
+            sudo apt-get install -y tailscale
 
-          # 3. 验证安装
-          tailscale version
+            # 3. 验证安装
+            tailscale version
 
-      - name: debug
-        script: echo "$TS_AUTHKEY"
+        - name: debug
+          script: echo "$TS_AUTHKEY"
 # pipelines:
 #   - name: install-tailscale
 #     description: "安装 Tailscale 并设置 tag 为 ci"
