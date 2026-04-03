@@ -1,0 +1,14 @@
+{
+	"servers": {
+		"cnb": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"-p",
+				"@cnbcool/mcp-server",
+				"cnb-mcp-stdio"
+			],
+			"envFile": "${workspaceFolder}/.env.mcp"
+		}
+	}
+}

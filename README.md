@@ -6,6 +6,52 @@ PVE with Github runner, build HomeLab Environment
 git config http.https://github.com.proxy http://127.0.0.1:38457
 ```
 
+## Git 双远程配置（GitHub + CNB）
+
+目标：
+- `git push github` 推送到 GitHub
+- `git push cnb` 推送到 CNB
+
+```shell
+# 1) 查看当前远程
+git remote -v
+
+# 2) 把现有 origin 改名为 github
+git remote rename origin github
+
+# 3) 可选：如果 github 地址不对，重新设置
+# git remote set-url github https://github.com/okeyear/homelab-pve.git
+
+# 4) 新增 CNB 远程
+git remote add cnb https://cnb.cool/pipelines-template/homelab-pve.git
+
+# 5) 再次确认
+git remote -v
+
+# 6) 首次推送（以 main 分支为例，若你是 master 请替换）
+git push -u github main
+git push -u cnb main
+```
+
+后续日常推送：
+
+```shell
+git push github
+git push cnb
+```
+
+如果你希望一次命令同时推送两个远程，也可以配置：
+
+```shell
+git remote set-url --add --push github https://github.com/okeyear/homelab-pve.git
+git remote set-url --add --push github https://cnb.cool/pipelines-template/homelab-pve.git
+
+# 之后执行一次即可同时推送到 GitHub 和 CNB
+git push github
+```
+
+说明：上面的“一次命令同时推送”是可选方案。按你的需求，保留 `github` 和 `cnb` 两个远程分别执行 `git push github` / `git push cnb` 更直观。
+
 ## IP和网段
 PVE默认是vmbr0， 新建一个vmbr1,设置为10.10.10.0/24
 
