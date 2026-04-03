@@ -9,6 +9,22 @@ main:
       # 任务名字
       - name: hello cnb
         script: echo "hello cnb"
+      - name: install-tailscale
+        script: |
+          echo "install tailscale"
+          # 1. 添加 Tailscale GPG key 和仓库
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+            | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+            | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
+
+          # 2. 更新并安装
+          sudo apt-get update -y
+          sudo apt-get install -y tailscale
+
+          # 3. 验证安装
+          tailscale version
+
       - name: debug
         script: echo "$TS_AUTHKEY"
 # pipelines:
