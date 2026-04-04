@@ -1,0 +1,24 @@
+main: # 触发分支：在 main 分支上触发
+  web_trigger_one: # 触发事件：代码推送时触发
+    - name: tailscale # 流水线名称
+      imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
+      stages:
+        - name: install-tailscale # 阶段名称
+          jobs:
+            - name: install-tailscale
+              script: |
+                echo "install tailscale"
+                # 1. tailscale 安装脚本
+                curl -fsSL https://tailscale.com/install.sh | sh
+
+                # 2. 验证安装
+                tailscale version
+
+            - name: debug
+              script: echo "$TS_AUTHKEY"
+        - name: set-tailscale-tags # 阶段名称
+          jobs:
+            - name: tailscale-tag
+              script: |
+                echo "install tailscale tag"
+                             

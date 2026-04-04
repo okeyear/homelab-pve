@@ -1,27 +1,21 @@
 version: "1.2"
+include:
+  - cnb-tempate/tailscale.yml
 # 分支名
 main: # 触发分支：在 main 分支上触发
-  push: # 触发事件：代码推送时触发
+  web_trigger_one: # 触发事件：代码推送时触发
     - name: pipeline-1 # 流水线名称
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
         - name: stage-1 # 阶段名称
           jobs:
-            - name: job-1 # 任务名称
-              script: echo "in pipeline-1"
-        - name: hello cnb
-          script: echo "hello cnb"
-        - name: install-tailscale
-          script: |
-            echo "install tailscale"
-            # 1. tailscale 安装脚本
-            curl -fsSL https://tailscale.com/install.sh | sh
+            - name: install-tailscale
+              script: |
+                tailscale status
 
-            # 2. 验证安装
-            tailscale version
+            - name: debug
+              script: echo "$TS_AUTHKEY"
 
-        - name: debug
-          script: echo "$TS_AUTHKEY"
 # pipelines:
 #   - name: install-tailscale
 #     description: "安装 Tailscale 并设置 tag 为 ci"
