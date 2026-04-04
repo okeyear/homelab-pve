@@ -18,7 +18,7 @@ main: # 触发分支：在 main 分支上触发
             uname -a
             nproc
             # free -h
-            ps aux | grep tailscale
+            # ps aux | grep tailscale
             tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=ci
 
             tailscale status
