@@ -4,7 +4,7 @@ include:
 # 分支名
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
-    - name: install-tailscale
+    tailscale:
       stages:
         - name: debug-tailscale
           jobs:
@@ -13,7 +13,7 @@ main: # 触发分支：在 main 分支上触发
                 echo "Debug Tailscale"
                 tailscale version
 
-    - name: pipeline-2 # 流水线名称
+    pipeline-2: # 流水线名称
       stages:
         - name: stage-1 # 阶段名称
           jobs:
