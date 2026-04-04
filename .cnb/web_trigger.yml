@@ -220,9 +220,9 @@ branch:
 
   # 如下自定义按钮在所有分支详情页面显示
   - buttons:
-      - name: 按钮名4
-        description: 按钮描述
-        event: web_trigger_one
+      - name: install-tailscale
+        description: 安装tailscale,并设置tag为ci,后续能连接到tailscale网络中执行pipeline
+        event: web_trigger_tailscale
       - name: 按钮名5
         description: 按钮描述
         event: web_trigger_launch_vscode

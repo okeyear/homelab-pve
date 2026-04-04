@@ -3,16 +3,13 @@ include:
   - cnb-tempate/tailscale.yml
 # 分支名
 main: # 触发分支：在 main 分支上触发
-  web_trigger_one: # 触发事件：代码推送时触发
-    - name: pipeline-1 # 流水线名称
+  web_trigger_tailscale: # 触发事件：代码推送时触发
+    - name: tailscale
+    - name: pipeline-2 # 流水线名称
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
         - name: stage-1 # 阶段名称
           jobs:
-            - name: install-tailscale
-              script: |
-                tailscale status
-
             - name: debug
               script: echo "$TS_AUTHKEY"
 
