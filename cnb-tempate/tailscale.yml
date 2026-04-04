@@ -17,7 +17,7 @@ main: # 触发分支：在 main 分支上触发
             cat /etc/os-release
             uname -a
             nproc
-            free -h
+            # free -h
             ps aux | grep tailscale
             tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=ci
 
