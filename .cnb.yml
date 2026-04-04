@@ -14,17 +14,10 @@ main: # 触发分支：在 main 分支上触发
         - name: install-tailscale
           script: |
             echo "install tailscale"
-            # 1. 添加 Tailscale GPG key 和仓库
-            curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
-              | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
-            curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
-              | sudo tee /etc/apt/sources.list.d/tailscale.list > /dev/null
+            # 1. tailscale 安装脚本
+            curl -fsSL https://tailscale.com/install.sh | sh
 
-            # 2. 更新并安装
-            sudo apt-get update -y
-            sudo apt-get install -y tailscale
-
-            # 3. 验证安装
+            # 2. 验证安装
             tailscale version
 
         - name: debug
