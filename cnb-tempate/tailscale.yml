@@ -8,12 +8,14 @@ main: # 触发分支：在 main 分支上触发
             echo "install tailscale"
             # tailscale 安装脚本
             curl -fsSL https://tailscale.com/install.sh | sh
-            tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=ci
 
         - name: debug-tailscale # 阶段名称
           script: |
             echo "check"                             
             # 验证安装
             tailscale version
+            ps aux | grep tailscale
+            tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=ci
+
             tailscale status
             echo "$TS_AUTHKEY"
