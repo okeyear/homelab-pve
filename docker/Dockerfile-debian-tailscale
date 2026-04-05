@@ -131,7 +131,7 @@ start_daemon
 wait_for_socket
 run_up_if_configured
 
-wait "${TS_DAEMON_PID}"
+# wait "${TS_DAEMON_PID}"
 EOF
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
