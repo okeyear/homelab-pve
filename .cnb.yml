@@ -4,14 +4,13 @@ include:
 # 分支名
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
-    tailscale: # 流水线名称
-      stages:
-        - name: debug-tailscale
-          jobs:
-            - name: debug-tailscale
-              script: |
-                echo "Debug Tailscale"
-                tailscale version
+    stages:
+      - name: debug-tailscale
+        jobs:
+          - name: debug-tailscale
+            script: |
+              echo "Debug Tailscale"
+              tailscale version
 
     # pipeline-2: # 流水线名称
     #   stages:
