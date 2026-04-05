@@ -12,14 +12,12 @@ main: # 触发分支：在 main 分支上触发
               echo "Debug Tailscale"
               tailscale version
 
-    # pipeline-2: # 流水线名称
-    #   stages:
-    #     - name: stage-1 # 阶段名称
-    #       jobs:
-    #         - name: debug
-    #           script: |
-    #             echo "$TS_AUTHKEY"
-    #             tailscale version
+          - name: stage-1 # 阶段名称
+            jobs:
+              - name: debug
+                script: |
+                  echo "$TS_AUTHKEY"
+                  tailscale netcheck
 
 # pipelines:
 #   - name: install-tailscale
