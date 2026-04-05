@@ -128,6 +128,6 @@ wait "${TS_DAEMON_PID}"
 EOF
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]
+# VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
