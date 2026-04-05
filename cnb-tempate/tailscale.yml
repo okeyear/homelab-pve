@@ -30,7 +30,6 @@ main: # 触发分支：在 main 分支上触发
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
             nproc
             # free -h
-            tailscale status
             env
             # ps aux | grep tailscale
 
