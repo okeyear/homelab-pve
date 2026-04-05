@@ -1,13 +1,17 @@
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
-    tailscale: # 流水线名称
+    # tailscale: # 流水线名称
+    - docker:
+        # 声明使用项目中的 Dockerfile 来构建环境镜像
+        build: docker/Dockerfile.debian
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
-        - name: install-tailscale # 阶段名称
-          script: |
-            echo "install tailscale"
-            # tailscale 安装脚本
-            curl -fsSL https://tailscale.com/install.sh | sh
+        # 下面的脚本任务将在自定义构建的环境中运行   
+        # - name: install-tailscale # 阶段名称
+        #   script: |
+        #     echo "install tailscale"
+        #     # tailscale 安装脚本
+        #     curl -fsSL https://tailscale.com/install.sh | sh
 
         - name: debug-tailscale # 阶段名称
           script: |
