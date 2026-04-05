@@ -3,7 +3,9 @@ main: # 触发分支：在 main 分支上触发
     # tailscale: # 流水线名称
     - docker:
         # 声明使用项目中的 Dockerfile 来构建环境镜像
-        build: cnb-tempate/docker/Dockerfile
+        build: 
+          dockerfile: cnb-tempate/docker/Dockerfile
+          buildArgs: "-o context"
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
         # 下面的脚本任务将在自定义构建的环境中运行   
