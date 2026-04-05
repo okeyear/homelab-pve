@@ -1,5 +1,5 @@
-# FROM debian:bookworm-slim
-FROM cnbcool/default-build-env
+FROM debian:bookworm-slim
+# FROM cnbcool/default-build-env
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TS_CHANNEL=stable \
@@ -27,6 +27,13 @@ source /etc/os-release
 CODENAME="${VERSION_CODENAME:-bookworm}"
 
 export DEBIAN_FRONTEND=noninteractive
+rm -f /etc/apt/sources.list.d/debian.sources
+cat > /etc/apt/sources.list <<APT_EOF
+deb http://mirrors.cloud.tencent.com/debian/ ${CODENAME} main contrib non-free non-free-firmware
+deb http://mirrors.cloud.tencent.com/debian/ ${CODENAME}-updates main contrib non-free non-free-firmware
+deb http://mirrors.cloud.tencent.com/debian-security ${CODENAME}-security main contrib non-free non-free-firmware
+APT_EOF
+
 apt-get update
 apt-get install -yq --no-install-recommends ca-certificates curl gnupg tmux wget curl vim
 
