@@ -8,7 +8,7 @@ main: # 触发分支：在 main 分支上触发
     - docker:
         # 声明使用项目中的 Dockerfile 来构建环境镜像
         build: 
-          dockerfile: Dockerfile-debian-tailscale
+          dockerfile: docker/Dockerfile-debian-tailscale
           buildArgs: '-o context'
       stages:
         - name: debug-tailscale
