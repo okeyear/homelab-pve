@@ -1,39 +1,40 @@
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
-    - runner:
-        # 指定在 amd64 架构构建节点上执行
-        tags: cnb:arch:amd64
-        cpus: 1  
-    # tailscale: # 流水线名称
-    - docker:
-        # 声明使用项目中的 Dockerfile 来构建环境镜像
-        build: 
-          dockerfile: docker/Dockerfile-debian-tailscale
-          # buildArgs: "-o context"
-      imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
-      stages:
-        # 下面的脚本任务将在自定义构建的环境中运行   
-        # - name: install-tailscale # 阶段名称
-        #   script: |
-        #     echo "install tailscale"
-        #     # tailscale 安装脚本
-        #     curl -fsSL https://tailscale.com/install.sh | sh
+    tailscale:
+      - runner:
+          # 指定在 amd64 架构构建节点上执行
+          tags: cnb:arch:amd64
+          cpus: 1  
+      # tailscale: # 流水线名称
+      - docker:
+          # 声明使用项目中的 Dockerfile 来构建环境镜像
+          build: 
+            dockerfile: docker/Dockerfile-debian-tailscale
+            # buildArgs: "-o context"
+        imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
+        stages:
+          # 下面的脚本任务将在自定义构建的环境中运行   
+          # - name: install-tailscale # 阶段名称
+          #   script: |
+          #     echo "install tailscale"
+          #     # tailscale 安装脚本
+          #     curl -fsSL https://tailscale.com/install.sh | sh
 
-        - name: debug-tailscale # 阶段名称
-          script: |
-            echo "check"                             
-            # 验证安装
-            # cat /etc/os-release
-            # env
-            # pwd 
-            # ls -la
-            # uname -a
-            # nohup /usr/local/bin/entrypoint.sh 2>&1 &
-            /usr/local/bin/entrypoint.sh
-            # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
-            # nproc
-            # echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-            # tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-            
-            tailscale version
-            tailscale status | grep cnb-runner-agent
+          - name: debug-tailscale # 阶段名称
+            script: |
+              echo "check"                             
+              # 验证安装
+              # cat /etc/os-release
+              # env
+              # pwd 
+              # ls -la
+              # uname -a
+              # nohup /usr/local/bin/entrypoint.sh 2>&1 &
+              /usr/local/bin/entrypoint.sh
+              # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
+              # nproc
+              # echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+              # tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+              
+              tailscale version
+              tailscale status | grep cnb-runner-agent
