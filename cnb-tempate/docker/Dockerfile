@@ -11,13 +11,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN echo "构建上下文路径是: $(pwd)"
 
 # RUN cat /etc/os-release
-COPY ./install-tailscale-debian.sh /usr/local/bin/install-tailscale-debian.sh
-RUN chmod +x /usr/local/bin/install-tailscale-debian.sh \
-    && /usr/local/bin/install-tailscale-debian.sh
+# COPY ./install-tailscale-debian.sh /usr/local/bin/install-tailscale-debian.sh
+# RUN chmod +x /usr/local/bin/install-tailscale-debian.sh \
+#     && /usr/local/bin/install-tailscale-debian.sh
 
-COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
+# RUN chmod +x /usr/local/bin/entrypoint.sh
 
-VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]
+# VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
