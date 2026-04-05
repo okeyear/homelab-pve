@@ -24,7 +24,7 @@ main: # 触发分支：在 main 分支上触发
             env
             ls
             uname -a
-            /entrypoint.sh
+            /usr/local/bin/entrypoint.sh
             nproc
             # free -h
             # ps aux | grep tailscale
