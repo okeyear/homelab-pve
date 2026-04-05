@@ -7,11 +7,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TS_STATE_DIR=/var/lib/tailscale \
     TS_SOCKET=/var/run/tailscale/tailscaled.sock
 
-COPY docker/install-tailscale-debian.sh /usr/local/bin/install-tailscale-debian.sh
+COPY install-tailscale-debian.sh /usr/local/bin/install-tailscale-debian.sh
 RUN chmod +x /usr/local/bin/install-tailscale-debian.sh \
     && /usr/local/bin/install-tailscale-debian.sh
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]

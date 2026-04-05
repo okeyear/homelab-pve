@@ -4,14 +4,15 @@ This repo now includes a Debian-based container build for installing and running
 
 ## Files
 
-- `docker/install-tailscale-debian.sh`: installs Tailscale from official package repo
-- `docker/entrypoint.sh`: starts `tailscaled`, optionally runs `tailscale up`
-- `docker/Dockerfile.debian`: base image and runtime wiring
+- `install-tailscale-debian.sh`: installs Tailscale from official package repo
+- `entrypoint.sh`: starts `tailscaled`, optionally runs `tailscale up`
+- `Dockerfile.debian`: base image and runtime wiring
 
 ## Build
 
 ```bash
-docker build -f docker/Dockerfile.debian -t tailscale-debian:local .
+cd docker
+docker build -f Dockerfile.debian -t tailscale-debian:local .
 ```
 
 ## Runtime modes
