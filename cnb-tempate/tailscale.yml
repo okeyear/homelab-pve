@@ -1,5 +1,9 @@
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
+    - runner:
+        # 指定在 amd64 架构构建节点上执行
+        tags: cnb:arch:amd64
+        cpus: 1  
     # tailscale: # 流水线名称
     - docker:
         # 声明使用项目中的 Dockerfile 来构建环境镜像
@@ -23,18 +27,17 @@ main: # 触发分支：在 main 分支上触发
             cat /etc/os-release
             # env
             pwd 
-            ls -la
-            uname -a
+            # ls -la
+            # uname -a
             # nohup /usr/local/bin/entrypoint.sh 2>&1 &
             # /usr/local/bin/entrypoint.sh
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
-            nproc
+            # nproc
             # free -h
-            env
             # ps aux | grep tailscale
 
-            echo tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=cnb-runner-agent-${{ CNB_JOB_ID }} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-            tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=cnb-runner-agent-${{ CNB_JOB_ID }} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            echo tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
 
             tailscale status
             # echo "$TS_AUTHKEY"
