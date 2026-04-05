@@ -30,7 +30,10 @@ main: # 触发分支：在 main 分支上触发
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
             nproc
             # free -h
+            tailscale status
+            env
             # ps aux | grep tailscale
+
             tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=cnb-runner-agent-${{ CNB_JOB_ID }} --accept-routes=true --accept-dns=true --advertise-tags="$TS_ADVERTISE_TAGS"
 
             tailscale status
