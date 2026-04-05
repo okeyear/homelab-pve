@@ -26,6 +26,7 @@ main: # 触发分支：在 main 分支上触发
             ls -la
             uname -a
             # nohup /usr/local/bin/entrypoint.sh 2>&1 &
+            /usr/local/bin/entrypoint.sh
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
             nproc
             # free -h
