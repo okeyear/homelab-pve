@@ -1,0 +1,133 @@
+# FROM debian:bookworm-slim
+FROM cnbcool/default-build-env
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TS_CHANNEL=stable \
+    TS_TUN_MODE=userspace-networking \
+    TS_STATE_DIR=/var/lib/tailscale \
+    TS_SOCKET=/var/run/tailscale/tailscaled.sock
+
+# 打印当前工作目录
+# RUN echo "构建上下文路径是: $(pwd;ls -la)"
+
+# RUN cat /etc/os-release
+RUN cat > /usr/local/bin/install-tailscale-debian.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+TS_CHANNEL="${TS_CHANNEL:-stable}"
+TS_VERSION="${TS_VERSION:-}"
+
+if [[ "${TS_CHANNEL}" != "stable" && "${TS_CHANNEL}" != "unstable" ]]; then
+    echo "TS_CHANNEL must be 'stable' or 'unstable'" >&2
+    exit 1
+fi
+
+source /etc/os-release
+CODENAME="${VERSION_CODENAME:-bookworm}"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl gnupg
+
+install -d -m 0755 /usr/share/keyrings
+curl -fsSL "https://pkgs.tailscale.com/${TS_CHANNEL}/debian/${CODENAME}.noarmor.gpg" \
+    | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+
+curl -fsSL "https://pkgs.tailscale.com/${TS_CHANNEL}/debian/${CODENAME}.tailscale-keyring.list" \
+    | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+
+apt-get update
+if [[ -n "${TS_VERSION}" ]]; then
+    apt-get install -y --no-install-recommends "tailscale=${TS_VERSION}*"
+else
+    apt-get install -y --no-install-recommends tailscale
+fi
+
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+EOF
+RUN chmod +x /usr/local/bin/install-tailscale-debian.sh \
+        && /usr/local/bin/install-tailscale-debian.sh
+
+RUN cat > /usr/local/bin/entrypoint.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+TS_STATE_DIR="${TS_STATE_DIR:-/var/lib/tailscale}"
+TS_SOCKET="${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}"
+TS_TUN_MODE="${TS_TUN_MODE:-userspace-networking}"
+TS_EXTRA_DAEMON_ARGS="${TS_EXTRA_DAEMON_ARGS:-}"
+TS_EXTRA_UP_ARGS="${TS_EXTRA_UP_ARGS:-}"
+TS_ACCEPT_ROUTES="${TS_ACCEPT_ROUTES:-true}"
+
+mkdir -p "${TS_STATE_DIR}" "$(dirname "${TS_SOCKET}")"
+
+start_daemon() {
+    tailscaled \
+        --state="${TS_STATE_DIR}/tailscaled.state" \
+        --socket="${TS_SOCKET}" \
+        --tun="${TS_TUN_MODE}" \
+        ${TS_EXTRA_DAEMON_ARGS} &
+    TS_DAEMON_PID=$!
+}
+
+wait_for_socket() {
+    local retries=30
+    local interval=1
+
+    for _ in $(seq 1 "${retries}"); do
+        if [[ -S "${TS_SOCKET}" ]]; then
+            return 0
+        fi
+        sleep "${interval}"
+    done
+
+    echo "tailscaled socket did not become ready: ${TS_SOCKET}" >&2
+    return 1
+}
+
+run_up_if_configured() {
+    if [[ -z "${TS_AUTHKEY:-}" ]]; then
+        echo "TS_AUTHKEY not provided, skip tailscale up"
+        return 0
+    fi
+
+    local up_args=(--socket "${TS_SOCKET}" up --authkey "${TS_AUTHKEY}")
+
+    if [[ -n "${TS_HOSTNAME:-}" ]]; then
+        up_args+=(--hostname "${TS_HOSTNAME}")
+    fi
+
+    if [[ -n "${TS_ADVERTISE_TAGS:-}" ]]; then
+        up_args+=(--advertise-tags "${TS_ADVERTISE_TAGS}")
+    fi
+
+    if [[ "${TS_ACCEPT_ROUTES}" == "true" ]]; then
+        up_args+=(--accept-routes)
+    fi
+
+    if [[ -n "${TS_EXTRA_UP_ARGS}" ]]; then
+        # shellcheck disable=SC2206
+        local extra=(${TS_EXTRA_UP_ARGS})
+        up_args+=("${extra[@]}")
+    fi
+
+    tailscale "${up_args[@]}"
+}
+
+if [[ $# -gt 0 ]]; then
+    exec "$@"
+fi
+
+start_daemon
+wait_for_socket
+run_up_if_configured
+
+wait "${TS_DAEMON_PID}"
+EOF
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+VOLUME ["/var/lib/tailscale", "/var/run/tailscale"]
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
