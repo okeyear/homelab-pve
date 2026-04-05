@@ -28,7 +28,7 @@ CODENAME="${VERSION_CODENAME:-bookworm}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl gnupg
+apt-get install -yq --no-install-recommends ca-certificates curl gnupg tmux wget curl vim
 
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL "https://pkgs.tailscale.com/${TS_CHANNEL}/debian/${CODENAME}.noarmor.gpg" \
