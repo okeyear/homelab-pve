@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TS_SOCKET=/var/run/tailscale/tailscaled.sock
 
 # 打印当前工作目录
-RUN echo "构建上下文路径是: $(pwd)"
+RUN echo "构建上下文路径是: $(pwd;ls -la)"
 
 # RUN cat /etc/os-release
 # COPY ./install-tailscale-debian.sh /usr/local/bin/install-tailscale-debian.sh
