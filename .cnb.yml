@@ -1,15 +1,10 @@
 version: "1.2"
-# include:
-#   - cnb-tempate/tailscale.yml
+include:
+  - cnb-tempate/tailscale.yml
 # 分支名
 main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
-    # tailscale: # 流水线名称
-    - docker:
-        # 声明使用项目中的 Dockerfile 来构建环境镜像
-        build: 
-          dockerfile: docker/Dockerfile-debian-tailscale
-          buildArgs: '-o context'
+    tailscale: # 流水线名称
       stages:
         - name: debug-tailscale
           jobs:

@@ -4,7 +4,7 @@ main: # 触发分支：在 main 分支上触发
     - docker:
         # 声明使用项目中的 Dockerfile 来构建环境镜像
         build: 
-          dockerfile: Dockerfile-debian-tailscale
+          dockerfile: docker/Dockerfile-debian-tailscale
           buildArgs: "-o context"
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
@@ -25,7 +25,7 @@ main: # 触发分支：在 main 分支上触发
             nproc
             # free -h
             # ps aux | grep tailscale
-            tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=ci
+            # tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=$TS_ADVERTISE_TAGS
 
             tailscale status
-            echo "$TS_AUTHKEY"
+            # echo "$TS_AUTHKEY"
