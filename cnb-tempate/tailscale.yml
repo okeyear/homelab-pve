@@ -21,11 +21,12 @@ main: # 触发分支：在 main 分支上触发
             # 验证安装
             tailscale version
             cat /etc/os-release
+            env
             uname -a
             nproc
             # free -h
             # ps aux | grep tailscale
-            # tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=$TS_ADVERTISE_TAGS
+            tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=$TS_ADVERTISE_TAGS
 
             tailscale status
             # echo "$TS_AUTHKEY"
