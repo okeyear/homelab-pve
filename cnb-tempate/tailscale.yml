@@ -36,8 +36,8 @@ main: # 触发分支：在 main 分支上触发
             # free -h
             # ps aux | grep tailscale
 
-            echo tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-            tailscale up --authkey=$TS_AUTHKEY --socket "${TS_SOCKET}" --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
 
             tailscale status
             # echo "$TS_AUTHKEY"
