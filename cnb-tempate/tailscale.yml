@@ -21,8 +21,9 @@ main: # 触发分支：在 main 分支上触发
             # 验证安装
             tailscale version
             cat /etc/os-release
-            env
-            ls
+            # env
+            pwd 
+            ls -la
             uname -a
             # nohup /usr/local/bin/entrypoint.sh 2>&1 &
             tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
