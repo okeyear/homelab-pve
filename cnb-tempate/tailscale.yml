@@ -9,7 +9,7 @@ main: # 触发分支：在 main 分支上触发
         # 声明使用项目中的 Dockerfile 来构建环境镜像
         build: 
           dockerfile: docker/Dockerfile-debian-tailscale
-          buildArgs: "-o context"
+          # buildArgs: "-o context"
       imports: https://cnb.cool/pipelines-template/env/-/blob/main/tailscale.yml
       stages:
         # 下面的脚本任务将在自定义构建的环境中运行   
@@ -23,7 +23,6 @@ main: # 触发分支：在 main 分支上触发
           script: |
             echo "check"                             
             # 验证安装
-            tailscale version
             # cat /etc/os-release
             # env
             # pwd 
@@ -33,11 +32,8 @@ main: # 触发分支：在 main 分支上触发
             /usr/local/bin/entrypoint.sh
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
             # nproc
-            # free -h
-            # ps aux | grep tailscale
-
             # echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
             # tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-
-            tailscale status
-            # echo "$TS_AUTHKEY"
+            
+            tailscale version
+            tailscale status | grep cnb-runner-agent
