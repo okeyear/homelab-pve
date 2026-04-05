@@ -24,9 +24,9 @@ main: # 触发分支：在 main 分支上触发
             echo "check"                             
             # 验证安装
             tailscale version
-            cat /etc/os-release
+            # cat /etc/os-release
             # env
-            pwd 
+            # pwd 
             # ls -la
             # uname -a
             # nohup /usr/local/bin/entrypoint.sh 2>&1 &
@@ -36,8 +36,8 @@ main: # 触发分支：在 main 分支上触发
             # free -h
             # ps aux | grep tailscale
 
-            echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
-            tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            # echo tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
+            # tailscale up --authkey=$TS_AUTHKEY --hostname=${TS_HOSTNAME} --accept-routes=true --accept-dns=true --advertise-tags="${TS_ADVERTISE_TAGS}"
 
             tailscale status
             # echo "$TS_AUTHKEY"
