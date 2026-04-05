@@ -25,13 +25,13 @@ main: # 触发分支：在 main 分支上触发
             pwd 
             ls -la
             uname -a
-            nohup /usr/local/bin/entrypoint.sh 2>&1 &
+            # nohup /usr/local/bin/entrypoint.sh 2>&1 &
             # /usr/local/bin/entrypoint.sh
             # tmux new-session -d -s tailscale "/usr/local/bin/entrypoint.sh"
             nproc
             # free -h
             # ps aux | grep tailscale
-            # tailscale up --authkey=$TS_AUTHKEY --accept-routes=true --accept-dns=true --advertise-tags=$TS_ADVERTISE_TAGS
+            tailscale up --authkey=$TS_AUTHKEY --hostname=cnb-runner-agent-${{ CNB_JOB_ID }} --accept-routes=true --accept-dns=true --advertise-tags="$TS_ADVERTISE_TAGS"
 
             tailscale status
             # echo "$TS_AUTHKEY"
