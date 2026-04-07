@@ -12,7 +12,9 @@ This repo now includes a Debian-based container build for installing and running
 
 ```bash
 cd docker
-docker build -f Dockerfile.debian -t tailscale-debian:local .
+docker build -f Dockerfile-debian-tailscale -t tailscale:latest .
+docker tag tailscale:latest registry.cn-beijing.aliyuncs.com/my-dockermirrors/tailscale:latest
+docker push registry.cn-beijing.aliyuncs.com/my-dockermirrors/tailscale:latest
 ```
 
 ## Runtime modes
@@ -28,7 +30,7 @@ docker run --rm -it \
   -e TS_HOSTNAME=ci-node \
   -e TS_ADVERTISE_TAGS=tag:ci \
   -v tailscale-state:/var/lib/tailscale \
-  tailscale-debian:local
+  tailscale:latest
 ```
 
 ### 2) Kernel TUN mode (higher performance, needs extra privileges)
@@ -44,7 +46,7 @@ docker run --rm -it \
   -e TS_HOSTNAME=ci-node \
   -e TS_ADVERTISE_TAGS=tag:ci \
   -v tailscale-state:/var/lib/tailscale \
-  tailscale-debian:local
+  tailscale:latest
 ```
 
 ## Docker permissions explained
@@ -75,5 +77,5 @@ For userspace mode, you typically do not need `NET_ADMIN`, `SYS_MODULE`, or `/de
 If you pass a command to `docker run`, entrypoint executes it directly:
 
 ```bash
-docker run --rm -it tailscale-debian:local tailscale version
+docker run --rm -it tailscale:latest tailscale version
 ```
