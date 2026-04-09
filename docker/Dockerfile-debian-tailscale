@@ -35,7 +35,7 @@ deb http://mirrors.cloud.tencent.com/debian-security ${CODENAME}-security main c
 APT_EOF
 
 apt-get update
-apt-get install -yq --no-install-recommends ca-certificates curl gnupg tmux wget curl vim
+apt-get install -yq --no-install-recommends jq ca-certificates curl gnupg tmux wget curl vim
 
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL "https://pkgs.tailscale.com/${TS_CHANNEL}/debian/${CODENAME}.noarmor.gpg" \
