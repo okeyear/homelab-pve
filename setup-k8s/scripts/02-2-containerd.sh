@@ -68,10 +68,14 @@ grep -C1 /etc/containerd/certs.d /etc/containerd/config.toml
 sudo mkdir -pv /etc/containerd/certs.d/docker.io
 sudo tee /etc/containerd/certs.d/docker.io/hosts.toml << EOF
 server = "https://registry-1.docker.io" # 默认的官方仓库地址
-[host."http://10.10.10.1:5000"]
+[host."https://dockerproxy.net"]
   capabilities = ["pull", "resolve"]
-  skip_verify = true
-  skip_tls_verify = true
+  # skip_verify = true
+  # skip_tls_verify = true
+[host."https://docker.1ms.run"]
+  capabilities = ["pull", "resolve"]
+[host."https://docker.1panel.live"]
+  capabilities = ["pull", "resolve"]    
 # 关键：最后回退到官方源，确保在加速器失效时仍能拉取镜像
 [host."https://registry-1.docker.io"]
   capabilities = ["pull", "resolve"]
