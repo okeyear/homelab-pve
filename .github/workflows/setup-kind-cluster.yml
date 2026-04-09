@@ -94,15 +94,12 @@ jobs:
 
           # get the latest version of kind
           kind_ver=$(get_github_latest_release "kubernetes-sigs/kind")
-          # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/kind/releases/download/${kind_ver}/kind-linux-amd64"
           echo "KIND_VERSION=${kind_ver}" >> $GITHUB_ENV
 
           # install kind-linux-amd64 for ingress and gateway and loadbalancer
           version=$(get_github_latest_release "kubernetes-sigs/cloud-provider-kind")
-          echo "CPK_VERSION=${version}" >> $GITHUB_ENV
-          # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${version}/cloud-provider-kind_${version/v/}_linux_amd64.tar.gz"
-          # tar -xvf cloud-provider-kind_${version/v/}_linux_amd64.tar.gz
-          # sudo install cloud-provider-kind /usr/local/bin
+          echo "CPK_VERSION=${version/v/}" >> $GITHUB_ENV
+
 
       - name: Cache kind binary
         id:   cache-kind
@@ -115,7 +112,7 @@ jobs:
         if: steps.cache-kind.outputs.cache-hit != 'true'
         run: |
           wget -q "${GHPROXY}https://github.com/kubernetes-sigs/kind/releases/download/${{ env.KIND_VERSION }}/kind-linux-amd64" -O "/tmp/kind/kind"
-          wget -q "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${{ env.CPK_VERSION }}/cloud-provider-kind_${{ env.CPK_VERSION/v/ }}_linux_amd64.tar.gz" -O "/tmp/kind/cloud-provider-kind.tar.gz"
+          wget -q "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/v${{ env.CPK_VERSION }}/cloud-provider-kind_${{ env.CPK_VERSION }}_linux_amd64.tar.gz" -O "/tmp/kind/cloud-provider-kind.tar.gz"
 
       - name: sync kind binary to remote
         # if: steps.ache-airgap-images.outputs.cache-hit != 'true'
