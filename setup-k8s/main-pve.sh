@@ -32,7 +32,7 @@ color_echo "Setting up containerd on node"
 bash scripts/02-2-containerd.sh
 
 color_echo "Installing kubelet, kubectl, kubeadm on node"
-bash scripts/03-kubelet.sh
+k8sver=v${K8S_VERSION%.*} bash scripts/03-kubelet.sh
 
 
 # initialize the first master node
