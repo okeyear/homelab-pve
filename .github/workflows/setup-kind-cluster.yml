@@ -15,6 +15,7 @@ on:
         options:
           - self-hosted
           - ubuntu-latest
+
       kindest_node_tag:
         description: 'supported kindest/node:tag'
         required: true
@@ -32,7 +33,6 @@ on:
 env:
   TAILSCALE_HOST: pve
   TAILSCALE_NET: taile80cb.ts.net
-
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -93,20 +93,16 @@ jobs:
           }
 
           # get the latest version of kind
-          if ! command -v kind &>/dev/null; then
-            kind_ver=$(get_github_latest_release "kubernetes-sigs/kind")
-            # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/kind/releases/download/${kind_ver}/kind-linux-amd64"
-            echo "KIND_VERSION=${kind_ver}" >> $GITHUB_ENV
-          fi
+          kind_ver=$(get_github_latest_release "kubernetes-sigs/kind")
+          # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/kind/releases/download/${kind_ver}/kind-linux-amd64"
+          echo "KIND_VERSION=${kind_ver}" >> $GITHUB_ENV
 
-          if [ ! -f /usr/local/bin/cloud-provider-kind ]; then
-            # install kind-linux-amd64 for ingress and gateway and loadbalancer
-            version=$(get_github_latest_release "kubernetes-sigs/cloud-provider-kind")
-            echo "CPK_VERSION=${version}" >> $GITHUB_ENV
-            # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${version}/cloud-provider-kind_${version/v/}_linux_amd64.tar.gz"
-            # tar -xvf cloud-provider-kind_${version/v/}_linux_amd64.tar.gz
-            # sudo install cloud-provider-kind /usr/local/bin
-          fi
+          # install kind-linux-amd64 for ingress and gateway and loadbalancer
+          version=$(get_github_latest_release "kubernetes-sigs/cloud-provider-kind")
+          echo "CPK_VERSION=${version}" >> $GITHUB_ENV
+          # curl -SLO "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${version}/cloud-provider-kind_${version/v/}_linux_amd64.tar.gz"
+          # tar -xvf cloud-provider-kind_${version/v/}_linux_amd64.tar.gz
+          # sudo install cloud-provider-kind /usr/local/bin
 
       - name: Cache kind binary
         id:   cache-kind
