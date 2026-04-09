@@ -65,7 +65,7 @@ sudo systemctl restart containerd.service
 ############## containerd配置自己加速地址
 grep -C1 /etc/containerd/certs.d /etc/containerd/config.toml
 
-sudo mkdir -pv /etc/containerd/certs.d/docker.io
+sudo mkdir -pv /etc/containerd/certs.d/{docker.io,ghcr.io,gcr.io,quay.io,k8s.gcr.io,registry.k8s.io,nvcr.io} # ,mcr.microsoft.com
 sudo tee /etc/containerd/certs.d/docker.io/hosts.toml << EOF
 server = "https://registry-1.docker.io" # 默认的官方仓库地址
 [host."https://dockerproxy.net"]
@@ -78,6 +78,36 @@ server = "https://registry-1.docker.io" # 默认的官方仓库地址
   capabilities = ["pull", "resolve"]    
 # 关键：最后回退到官方源，确保在加速器失效时仍能拉取镜像
 [host."https://registry-1.docker.io"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+sudo tee /etc/containerd/certs.d/ghcr.io/hosts.toml << EOF
+server = "https://ghcr.io" # 默认的官方仓库地址
+[host."https://ghcr.dockerproxy.net"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+sudo tee /etc/containerd/certs.d/gcr.io/hosts.toml << EOF
+server = "https://gcr.io" # 默认的官方仓库地址
+[host."https://gcr.dockerproxy.net"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+sudo tee /etc/containerd/certs.d/registry.k8s.io/hosts.toml << EOF
+server = "https://registry.k8s.io" # 默认的官方仓库地址
+[host."https://k8s.dockerproxy.net"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+sudo tee /etc/containerd/certs.d/k8s.gcr.io/hosts.toml << EOF
+server = "https://k8s.gcr.io" # 默认的官方仓库地址
+[host."https://k8s.dockerproxy.net"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+sudo tee /etc/containerd/certs.d/quay.io/hosts.toml << EOF
+server = "https://quay.io" # 默认的官方仓库地址
+[host."https://quay.dockerproxy.net"]
   capabilities = ["pull", "resolve"]
 EOF
 
