@@ -7,7 +7,7 @@ calico_ver=$(get_github_latest_release "projectcalico/calico")
 # calico_ver='v3.26.4'
 ######################
 # https://docs.tigera.io/calico/latest/getting-started/kubernetes/self-managed-onprem/onpremises
-curl -O https://raw.githubusercontent.com/projectcalico/calico/${calico_ver}/manifests/calico.yaml
+curl -O ${GHPROXY}https://raw.githubusercontent.com/projectcalico/calico/${calico_ver}/manifests/calico.yaml
 
 #  wget https://docs.projectcalico.org/manifests/calico.yaml
 
