@@ -1,0 +1,143 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "[ 14 ] sealos Setup k8s cluster"
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+      # kindest_node_tag:
+      #   description: 'supported kindest/node:tag'
+      #   required: true
+      #   default: '1.35.0'
+      #   type: choice
+      #   options:
+      #     - '1.34.0'
+      #     - '1.35.0'          
+      # VMs:
+      #   description: 'VM list JSON array'
+      #   required: true
+      #   type: string
+      #   default: '["10.10.10.11", "10.10.10.101", "10.10.10.102"]'   
+
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    name: 🚀 Deploy k8s via sealos
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner }}
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Check if already ssh key-based
+        id: check-ssh
+        run: |
+          set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v5
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # - name: set tailscale ssh
+      #   run: |
+      #     # pveHost=$(tailscale status --json | jq -r '.Self.HostName' )
+      #     # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
+      #     # tailscale status
+      #     test -d ~/.ssh || mkdir -p ~/.ssh
+      #     ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+      #     echo ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+      #     ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "true"
+
+      - name: get sealos latest version
+        run: |
+          function get_github_latest_release() {
+            curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+                grep '"tag_name":' |                                          # Get tag line
+                sed -E 's/.*"([^"]+)".*/\1/'                                  # Pluck JSON value
+          }
+
+          # get the latest version
+          sealos_ver=$(get_github_latest_release "labring/sealos")
+          echo "SEALOS_VERSION=${sealos_ver#v}" >> $GITHUB_ENV
+
+      - name: Cache sealos binary
+        id:   cache-sealos
+        uses: actions/cache@v4
+        with:
+          path: /tmp/sealos
+          key: sealos-${{ env.SEALOS_VERSION }}
+
+      - name: Download sealos (if cache miss)
+        if: steps.cache-sealos.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/sealos
+          wget -q "https://github.com/labring/sealos/releases/download/v${{ env.SEALOS_VERSION }}/sealos_${{ env.SEALOS_VERSION }}_linux_amd64.tar.gz" -O "/tmp/sealos/sealos.tar.gz"
+
+      - name: sync sealos binary to remote
+        run: |
+          cat > create-sealos-cluster.sh <<EOF
+          echo "Extracting sealos binary..."
+          tar zxvf sealos.tar.gz sealos 
+          chmod +x sealos
+          install -m 755 sealos /usr/bin
+          export PROXY_PREFIX=https://ghfast.top
+          export GHPROXY=https://ghfast.top/
+          wget  \${GHPROXY}https://raw.githubusercontent.com/labring/sealos/refs/heads/main/scripts/cloud/install-v2.sh 
+
+          SEALOS_V2_CLOUD_VERSION=latest SEALOS_V2_PROXY=true \
+            SEALOS_V2_CLOUD_DOMAIN=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} \
+            SEALOS_V2_ENABLE_ACME=true bash install-v2.sh
+          EOF
+
+          for pkg in /tmp/sealos/sealos.tar.gz create-sealos-cluster.sh
+          do
+            # ssh-keygen -f "~/.ssh/known_hosts" -R ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}
+            # ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+            echo "Sync ${pkg} from runner to ${{ env.TAILSCALE_HOST }} ..."         
+            rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+            # scp $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
+
+
+
+      - name: install sealos on remote
+        run: |
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash create-sealos-cluster.sh"
+
