@@ -11,16 +11,17 @@ if [ -s "${SCRIPT_DIR}/config.sh" ]; then
 fi
 
 # download pkgs
-[ -d pkgs ] || mkdir pkgs
-cd pkgs
-containerd_ver=$(get_github_latest_release containerd/containerd)
-wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/${containerd_ver}/containerd-${containerd_ver/v/}-linux-amd64.tar.gz"
-wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
-runc_ver=$(get_github_latest_release opencontainers/runc)
-wget -c ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
-cni_ver=$(get_github_latest_release containernetworking/plugins)
-wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
-cd -
+[ -d /tmp/setup-k8s/pkgs/ ] || mkdir -pv /tmp/setup-k8s/pkgs/
+# [ -d pkgs ] || mkdir pkgs
+# cd pkgs
+# containerd_ver=$(get_github_latest_release containerd/containerd)
+# wget -c "${GHPROXY}https://github.com/containerd/containerd/releases/download/${containerd_ver}/containerd-${containerd_ver/v/}-linux-amd64.tar.gz"
+# wget -c ${GHPROXY}https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+# runc_ver=$(get_github_latest_release opencontainers/runc)
+# wget -c ${GHPROXY}https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
+# cni_ver=$(get_github_latest_release containernetworking/plugins)
+# wget -c ${GHPROXY}https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz
+# cd -
 
 
 # install base packages, containerd, kubelet, kubeadm, kubectl on all nodes
