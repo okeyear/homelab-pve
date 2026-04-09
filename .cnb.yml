@@ -6,19 +6,15 @@ main: # 触发分支：在 main 分支上触发
   web_trigger_tailscale: # 触发事件：代码推送时触发
     stages:
       - name: debug-tailscale
-        jobs:
-          - name: debug-tailscale
-            script: |
-              echo "Debug Tailscale"
-              tailscale version
+        script: |
+          echo "Debug Tailscale"
+          tailscale version
 
       - name: stage-2 # 阶段名称
-        jobs:
-          - name: debug
-            script: |
-              echo "$TS_AUTHKEY"
-              tailscale netcheck
-              tailscale ip -4
+        script: |
+          echo "$TS_AUTHKEY"
+          tailscale netcheck
+          tailscale ip -4
 
 
 #           # ============================================
