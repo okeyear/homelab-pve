@@ -111,6 +111,7 @@ jobs:
       - name: Download kind (if cache miss)
         if: steps.cache-kind.outputs.cache-hit != 'true'
         run: |
+          mkdir -p /tmp/kind
           wget -q "${GHPROXY}https://github.com/kubernetes-sigs/kind/releases/download/${{ env.KIND_VERSION }}/kind-linux-amd64" -O "/tmp/kind/kind"
           wget -q "${GHPROXY}https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/v${{ env.CPK_VERSION }}/cloud-provider-kind_${{ env.CPK_VERSION }}_linux_amd64.tar.gz" -O "/tmp/kind/cloud-provider-kind.tar.gz"
 
