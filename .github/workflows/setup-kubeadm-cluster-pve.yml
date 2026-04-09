@@ -1,0 +1,129 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "[ 10 ] kubeadm Setup k8s cluster on pve"
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+      k8s_version:
+        description: 'supported stable k8s version https://kubernetes.io/releases/'
+        required: true
+        default: '1.35'
+        type: choice
+        options:
+          - '1.32'
+          - '1.33'
+          - '1.34'
+          - '1.35'
+
+      vm_user:
+        description: 'VM Guest: OS User'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root
+
+      VMs:
+        description: 'VM list JSON array'
+        required: true
+        type: string
+        default: '["10.10.10.101", "10.10.10.102"]'
+
+env:
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
+  VMs: ${{ github.event.inputs.VMs }}
+  VM_USER: ${{ github.event.inputs.vm_user }}
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    name: 🚀 Deploy k8s ${{ github.event.inputs.k8s_version }} via kubeadm
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner }}
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v5
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -yq && sudo apt-get install -yq sshpass
+        #   wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        #   sudo install -m 755 yq_linux_amd64 /usr/bin/yq
+
+      - name: Check if already ssh key-based
+        id: check-ssh
+        run: |
+          set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # 1️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      - name: Get k8s version
+        run: |
+          K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
+          echo "k8s version: $K8S_VERSION"
+          echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
+
+
+      - name: Sync scripts
+        run: |
+          MASTER_NODES=10.10.10.1
+          WORKER_NODES=$(echo "$VMs" | jq -r '.[1:] | join(" ")')
+          tee setup-k8s/config.sh <<EOF
+          CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
+          K8S_VERSION=${K8S_VERSION}
+          POD_CIDR=10.244.0.0/16
+          SERVICE_CIDR=10.96.0.0/12
+          NODE_PORT_RANGE=30000-32767
+          IMAGE_REPO=registry.aliyuncs.com/google_containers
+          MASTER_NODES=($MASTER_NODES)
+          LoadBalancer=($MASTER_NODES)
+          WORKER_NODES=($WORKER_NODES)
+          NODE_USER=${VM_USER}
+          SSH_KEY_PATH=~/.ssh/id_rsa
+          EOF
+
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace setup-k8s root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+      - name: setup k8s cluster via kubeadm
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup-k8s/main-pve.sh"          
