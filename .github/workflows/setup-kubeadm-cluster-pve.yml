@@ -107,7 +107,7 @@ jobs:
       - name: Sync scripts
         run: |
           MASTER_NODES=10.10.10.1
-          WORKER_NODES=$(echo "$VMs" | jq -r '.[1:] | join(" ")')
+          WORKER_NODES=$(echo "$VMs" | jq -r '.[0:] | join(" ")')
           tee setup-k8s/config.sh <<EOF
           CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}
           K8S_VERSION=${K8S_VERSION}
