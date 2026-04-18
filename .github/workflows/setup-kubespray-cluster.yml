@@ -205,7 +205,7 @@ jobs:
           kube_node
           EOF
 
-      - name: add registry host entry
+      - name: ansible add registry host entry and fetch kubeconfig
         run: |
           cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
           # 3️⃣ 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话）
@@ -222,6 +222,26 @@ jobs:
                   state: present
                   # 可选：使用正则表达式，确保不会重复添加
                   regexp: '^10\.10\.10\.1\s+pve\.taile80cb\.ts\.net'
+          EOF
+          
+          tee fetch-kubeconfig.yml <<'EOF'
+          - name: Sync kubeconfig from remote master to local
+            hosts: k8s-cp-01   # 替换为你的远程主机组或主机名
+            gather_facts: yes   # 确保获取环境变量（如 ansible_env）
+
+            tasks:
+              - name: Ensure local .kube directory exists
+                delegate_to: localhost
+                ansible.builtin.file:
+                  path: "{{ ansible_env.HOME }}/.kube"
+                  state: directory
+                  mode: '0755'
+
+              - name: Fetch admin.conf from remote to local kubeconfig
+                ansible.builtin.fetch:
+                  src: /etc/kubernetes/admin.conf
+                  dest: "{{ ansible_env.HOME }}/.kube/local.kubeconfig"
+                  flat: yes
           EOF
 
       - name: prepare offline packages and sync to registry (if needed)
@@ -253,7 +273,7 @@ jobs:
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
           cd $SCRIPT_DIR
 
-          ansible-playbook -i inventory/mycluster/inventory.ini add-hosts-entry.yml -b
+          ansible-playbook -i inventory/mycluster/inventory.ini add-hosts-entry.yml -b -v
           rsync -av /root/kubespray/contrib/offline/temp/files/* /usr/share/nginx/html/ 
           
           # nginx 默认的静态文件目录是 /usr/share/nginx/html/，默认的配置文件是 /etc/nginx/conf.d/default.conf
@@ -270,6 +290,7 @@ jobs:
 
           # 6️⃣ 执行 kubespray 的安装命令
           ansible-playbook -i inventory/mycluster/inventory.ini cluster.yml -b -v
+          ansible-playbook -i inventory/mycluster/inventory.ini fetch-kubeconfig.yml -b -v
           EOF
 
 
