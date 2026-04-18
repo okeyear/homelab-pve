@@ -1,0 +1,331 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "[ 21 ] k8s clusterinit settings"
+# TODO:
+# 1. 网络模式选择
+# 2. addons 选择
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      skip_file:
+        description: 'Skip OFFLINE file download'
+        required: true
+        default: true
+        type: boolean
+
+      K8S_CLUSTER_NAME:
+        description: 'Kubernetes cluster name: mycluster, devops, etc...'
+        required: true
+        type: string
+        default: 'mycluster'
+
+      VMs:
+        description: 'VM list JSON array'
+        required: true
+        type: string
+        default: '["10.10.10.11","10.10.10.12","10.10.10.13", "10.10.10.101", "10.10.10.102"]'
+
+      # k8s_version:
+      #   description: 'supported stable k8s version https://kubernetes.io/releases/'
+      #   required: true
+      #   default: '1.34'
+      #   type: choice
+      #   options:
+      #     - '1.32'
+      #     - '1.33'
+      #     - '1.34'
+      #     - '1.35'
+
+env:
+  # TAILSCALE_HOST: pve
+  # TAILSCALE_NET: taile80cb.ts.net
+  # VM_TEMPLATE_ID: 2009 # vm模板的ID
+  # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
+  # MASTER_IP: 10.10.10.11
+  # NODE01_IP: 10.10.10.101
+  # NODE02_IP: 10.10.10.102
+  # VMs: ${{ github.event.inputs.VMs }}
+  K8S_CLUSTER_NAME: ${{ github.event.inputs.K8S_CLUSTER_NAME }}
+  KUBECONFIG: ~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+  # VM_USER: ${{ github.event.inputs.vm_user }}
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  setup:
+    name: 🚀 init k8s settings
+    # The type of runner that the job will run on
+    # runs-on: [self-hosted]
+    # runs-on: ubuntu-latest
+    runs-on: pve
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v5
+
+      # 1️⃣ 安装基础依赖
+      - name: Install OS base packages
+        run: |
+          source ~/.bashrc
+          missing_pkgs=()
+          # package -> command mapping
+          declare -A pkg_cmd=(
+            [skopeo]=skopeo
+            [python3]=python3
+            [python3-pip]=pip3
+            [python3-venv]=python3
+            [jq]=jq
+          )
+
+          for pkg in skopeo python3 python3-pip python3-venv jq; do
+            cmd="${pkg_cmd[$pkg]}"
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+              missing_pkgs+=("$pkg")
+            fi
+          done
+
+          if [ ${#missing_pkgs[@]} -gt 0 ]; then
+            echo "Installing missing packages: ${missing_pkgs[*]}"
+            sudo apt-get update -yq >/dev/null
+            sudo apt-get install -yq "${missing_pkgs[@]}" >/dev/null
+          else
+            echo "All required commands already exist."
+          fi
+
+          # # externally-managed-environment 错误的临时解决方法，后续可以改为在 runner 上正确设置 Python 环境
+          sudo rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+
+          if ! command -v yq >/dev/null 2>&1; then
+            wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo install -m 755 yq_linux_amd64 /usr/bin/yq
+          fi          
+
+      # 2️⃣ 检查 
+      - name: Check kubectl
+        run: |
+          set +e
+          kubectl get node -o wide
+
+      # # 3️⃣  把 Runner 接入 tailnet
+      # - name: setup Tailscale Connect (if needed)
+      #   if: steps.check-ssh.outputs.keyless != 'true'
+      #   uses: tailscale/github-action@v3
+      #   with:
+      #     oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      #     oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+      #     tags: tag:ci     # 与 ACL 中的 tag 保持一致
+      #     version: latest # https://pkgs.tailscale.com/stable/#static
+      #     use-cache: 'true'
+
+      # # 4️⃣ install Ansible
+      # - name: install ansible
+      #   run: |
+      #     if ! command -v ansible &>/dev/null; then
+      #       pip install ansible-core==2.18.3 netaddr 
+      #       ansible-galaxy collection install ansible.posix \
+      #         community.general \
+      #         community.crypto \
+      #         kubernetes.core \
+      #         ansible.utils
+      #     fi
+
+      # # 5️⃣ 下载 kubespray 仓库，并复制 sample inventory 作为基础
+      # - name: download kubespray git repository
+      #   run: |
+      #     git clone https://github.com/kubernetes-sigs/kubespray.git
+      #     cd kubespray/
+      #     cp -rfp inventory/sample inventory/${K8S_CLUSTER_NAME}
+
+      #     ls -l inventory/${K8S_CLUSTER_NAME}
+
+      # # 6️⃣ 动态生成 Ansible inventory
+      # - name: Ansible inventory
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+      #     # 根据 workflow_dispatch 输入的 VMs(JSON 数组)动态生成 inventory.ini
+      #     python3 - <<'PY'
+      #     import json
+      #     import os
+      #     import sys
+
+      #     vms_raw = os.environ.get("VMS_JSON", "")
+      #     vm_user = os.environ.get("VM_USER", "vagrant")
+      #     cluster_name = os.environ.get("K8S_CLUSTER_NAME", "mycluster")
+
+      #     try:
+      #       vms = json.loads(vms_raw)
+      #     except Exception as e:
+      #       print(f"Invalid VMs JSON: {e}", file=sys.stderr)
+      #       sys.exit(1)
+
+      #     if not isinstance(vms, list) or not vms:
+      #       print("VMs must be a non-empty JSON array", file=sys.stderr)
+      #       sys.exit(1)
+
+      #     cp_hosts = []
+      #     node_hosts = []
+      #     all_lines = ["[all]"]
+      #     cp_index = 1
+      #     node_index = 1
+
+      #     for ip in vms:
+      #       if not isinstance(ip, str):
+      #         print(f"Invalid IP item (not string): {ip}", file=sys.stderr)
+      #         sys.exit(1)
+
+      #       parts = ip.split(".")
+      #       if len(parts) != 4:
+      #         print(f"Invalid IPv4 address: {ip}", file=sys.stderr)
+      #         sys.exit(1)
+
+      #       try:
+      #         last = int(parts[-1])
+      #       except ValueError:
+      #         print(f"Invalid IPv4 last octet: {ip}", file=sys.stderr)
+      #         sys.exit(1)
+
+      #       if last < 100:
+      #         host = f"k8s-cp-{cp_index:02d}"
+      #         cp_index += 1
+      #         cp_hosts.append(host)
+      #       elif last > 100:
+      #         host = f"k8s-node-{node_index:02d}"
+      #         node_index += 1
+      #         node_hosts.append(host)
+      #       else:
+      #         print(f"Unsupported IP by rule (last octet == 100): {ip}", file=sys.stderr)
+      #         sys.exit(1)
+
+      #       all_lines.append(f"{host} ansible_host={ip} ip={ip} ansible_user={vm_user}")
+
+      #     lines = []
+      #     lines.extend(all_lines)
+      #     lines.append("")
+      #     lines.append("[etcd]")
+      #     lines.extend(cp_hosts)
+      #     lines.append("")
+      #     lines.append("[kube_control_plane]")
+      #     lines.extend(cp_hosts)
+      #     lines.append("")
+      #     lines.append("[kube_node]")
+      #     lines.extend(node_hosts)
+      #     lines.append("")
+      #     lines.append("[lb]")
+      #     lines.extend(cp_hosts)
+      #     lines.append("")
+      #     lines.append("[k8s_cluster:children]")
+      #     lines.append("kube_control_plane")
+      #     lines.append("kube_node")
+      #     lines.append("")
+
+      #     inventory_path = f"inventory/{cluster_name}/inventory.ini"
+      #     with open(inventory_path, "w", encoding="utf-8") as f:
+      #       f.write("\n".join(lines))
+
+      #     print(f"Generated {inventory_path} with {len(cp_hosts)} control-plane and {len(node_hosts)} node hosts")
+      #     PY
+      #     cat inventory/${K8S_CLUSTER_NAME}/inventory.ini
+      #   env:
+      #     VMS_JSON: ${{ github.event.inputs.VMs }}
+
+      # # 7️⃣ 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话），并且准备离线安装需要的文件和镜像
+      # - name: ansible add registry host entry and fetch kubeconfig
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+      #     REGISTRY_HOST="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
+      #     REGISTRY_HOST_REGEX="$(printf '%s' "$REGISTRY_HOST" | sed -E 's/[][(){}.+*^$\\|?]/\\\\&/g')"
+      #     # 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话）
+      #     tee add-hosts-entry.yml <<EOF
+      #     ---
+      #     - name: Ensure registry host entry is present on all nodes
+      #       hosts: all  # 或者使用 'k8s-cluster' 等特定组
+      #       become: yes  # 修改 /etc/hosts 需要 root 权限
+      #       tasks:
+      #         - name: Add registry host entry to /etc/hosts
+      #           ansible.builtin.lineinfile:
+      #             path: /etc/hosts
+      #             line: '10.10.10.1 ${REGISTRY_HOST}'
+      #             state: present
+      #             # 可选：使用正则表达式，确保不会重复添加
+      #             regexp: '^10\.10\.10\.1\s+${REGISTRY_HOST_REGEX}$'
+      #     EOF
+
+      # # 8️⃣ 准备离线包并同步镜像
+      # - name: prepare offline packages and sync to registry (if needed)
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/kubespray/contrib/offline  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+      #     bash generate_list.sh
+      #     # 创建下载目录
+      #     mkdir -p temp/files
+      #     mkdir -p temp/images
+      #     # 下载所有二进制文件
+
+      #     if [ "${{ github.event.inputs.skip_file }}" != 'true' ]; then
+      #       wget -x -P temp/files -i temp/files.list
+      #     fi
+
+      #     if [ "${{ github.event.inputs.skip_image }}" != 'true' ]; then
+      #       # 把镜像同步到私有 registry 中（如果需要的话）
+      #       for image in $(cat temp/images.list); do
+      #         echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+      #         skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+      #       done
+      #     fi
+
+      # # 9️⃣ 准备 kubespray 的安装命令脚本，包含安装前的准备和安装命令
+      # - name: prepare kubespray command on pve
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+      #     tee main.sh <<'EOF'
+      #     #!/bin/bash
+      #     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+      #     cd $SCRIPT_DIR
+      #     CLUSTER_NAME="${K8S_CLUSTER_NAME:-mycluster}"
+
+      #     ansible-playbook -i inventory/${CLUSTER_NAME}/inventory.ini add-hosts-entry.yml -b -v
+      #     rsync -av /root/kubespray/contrib/offline/temp/files/* /usr/share/nginx/html/ 
+          
+      #     # nginx 默认的静态文件目录是 /usr/share/nginx/html/，默认的配置文件是 /etc/nginx/conf.d/default.conf
+      #     # /etc/nginx/conf.d/default.conf
+      #     # 开启目录列表功能
+      #     # autoindex on;
+
+      #     # 修改 kubespray 的离线安装配置，指向私有 registry 和文件服务器
+      #     OFFLINE_FILE="inventory/${CLUSTER_NAME}/group_vars/all/offline.yml"
+      #     sed -i '/registry_host:/cregistry_host: "pve.taile80cb.ts.net:5000/k8s"' $OFFLINE_FILE
+      #     sed -i '/files_repo:/cfiles_repo: "http://10.10.10.1"' $OFFLINE_FILE
+      #     sed -i '/_image_repo/s/^# //g' $OFFLINE_FILE
+      #     sed -i '/_download_url/s/^# //g' $OFFLINE_FILE
+
+      #     # 执行 kubespray 的安装命令
+      #     ansible-playbook -i inventory/${CLUSTER_NAME}/inventory.ini cluster.yml -b -v
+      #     EOF
+
+      # # 10️⃣ 把 kubespray 的安装命令脚本和准备好的文件同步到 PVE 上
+      # - name: sync kubespray to pve
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+      #     # rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
+      #     # rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -a -q --stats ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
+      #     rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -az --partial --inplace --info=name0,stats2 ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
+
+      # # 11️⃣ 通过 SSH 在 PVE 上执行 kubespray 的安装命令脚本，完成 Kubernetes 集群的部署
+      # - name: setup k8s via kubespray
+      #   run: |
+      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "K8S_CLUSTER_NAME='${{ env.K8S_CLUSTER_NAME }}' bash /root/kubespray/main.sh"          
+
+      # # 12️⃣ debug
+      # - name: debug
+      #   run: |
+      #     pwd
+      #     # sync kubeconfig from controlplane01 to local pve host
+      #     # [ -d ~/.kube ] || mkdir -p ~/.kube
+      #     echo "rsync --rsync-path=\"sudo rsync\" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig"
+      #     echo chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig          
+      #     # echo ${{ github.ref }}
+      #     # env
