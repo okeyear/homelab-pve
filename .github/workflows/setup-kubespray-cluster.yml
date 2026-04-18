@@ -169,7 +169,7 @@ jobs:
       - name: Ansible inventory
         run: |
           cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
-          #  根据 workflow_dispatch 输入的 VMs(JSON 数组)动态生成 inventory.ini
+          # 根据 workflow_dispatch 输入的 VMs(JSON 数组)动态生成 inventory.ini
           python3 - <<'PY'
           import json
           import os
@@ -189,8 +189,9 @@ jobs:
             print("VMs must be a non-empty JSON array", file=sys.stderr)
             sys.exit(1)
 
-          cp_lines = []
-          node_lines = []
+          cp_hosts = []
+          node_hosts = []
+          all_lines = ["[all]"]
           cp_index = 1
           node_index = 1
 
@@ -213,37 +214,43 @@ jobs:
             if last < 100:
               host = f"k8s-cp-{cp_index:02d}"
               cp_index += 1
-              cp_lines.append(f"{host} ansible_host={ip} ip={ip} ansible_user={vm_user}")
+              cp_hosts.append(host)
             elif last > 100:
               host = f"k8s-node-{node_index:02d}"
               node_index += 1
-              node_lines.append(f"{host} ansible_host={ip} ip={ip} ansible_user={vm_user}")
+              node_hosts.append(host)
             else:
               print(f"Unsupported IP by rule (last octet == 100): {ip}", file=sys.stderr)
               sys.exit(1)
 
+            all_lines.append(f"{host} ansible_host={ip} ip={ip} ansible_user={vm_user}")
+
           lines = []
-          lines.append("[kube_control_plane]")
-          lines.extend(cp_lines)
+          lines.extend(all_lines)
           lines.append("")
-          lines.append("[etcd:children]")
-          lines.append("kube_control_plane")
+          lines.append("[etcd]")
+          lines.extend(cp_hosts)
+          lines.append("")
+          lines.append("[kube_control_plane]")
+          lines.extend(cp_hosts)
           lines.append("")
           lines.append("[kube_node]")
-          lines.extend(node_lines)
+          lines.extend(node_hosts)
+          lines.append("")
+          lines.append("[lb]")
+          lines.extend(cp_hosts)
+          lines.append("")
+          lines.append("[k8s_cluster:children]")
+          lines.append("kube_control_plane")
+          lines.append("kube_node")
           lines.append("")
 
           inventory_path = f"inventory/{cluster_name}/inventory.ini"
           with open(inventory_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
-          print(f"Generated {inventory_path} with {len(cp_lines)} control-plane and {len(node_lines)} node hosts")
+          print(f"Generated {inventory_path} with {len(cp_hosts)} control-plane and {len(node_hosts)} node hosts")
           PY
-          tee -a inventory/${K8S_CLUSTER_NAME}/inventory.ini <<'EOF'
-          [k8s_cluster:children]
-          kube_control_plane
-          kube_node
-          EOF
           cat inventory/${K8S_CLUSTER_NAME}/inventory.ini
         env:
           VMS_JSON: ${{ github.event.inputs.VMs }}
