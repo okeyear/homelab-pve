@@ -40,17 +40,46 @@ git push github
 git push cnb
 ```
 
-如果你希望一次命令同时推送两个远程，也可以配置：
+如果你希望 git push 和 git pushall 都默认同时推送两个远程，可按下面配置：
 
 ```shell
-git remote set-url --add --push github https://github.com/okeyear/homelab-pve.git
-git remote set-url --add --push github https://cnb.cool/pipelines-template/homelab-pve.git
+# 1) 将 origin 改名为 github（仅首次需要）
+git remote rename origin github
 
-# 之后执行一次即可同时推送到 GitHub 和 CNB
-git push github
+# 2) 增加 cnb 远程
+git remote add cnb https://cnb.cool/pipelines-template/homelab-pve.git
+
+# 3) 创建聚合远程 all，包含两个 push 地址
+git remote add all https://github.com/okeyear/homelab-pve.git
+git remote set-url --add --push all https://github.com/okeyear/homelab-pve.git
+git remote set-url --add --push all https://cnb.cool/pipelines-template/homelab-pve.git
+
+# 4) 设置默认 push 到 all（无参 git push 生效）
+git config remote.pushDefault all
+git config push.default current
+
+# 5) 增加 pushall 别名
+git config alias.pushall "push all"
+
+# 6) 验证
+git remote -v
+git config --get remote.pushDefault
+git config --get alias.pushall
 ```
 
-说明：上面的“一次命令同时推送”是可选方案。按你的需求，保留 `github` 和 `cnb` 两个远程分别执行 `git push github` / `git push cnb` 更直观。
+配置完成后，三种推送方式分别为：
+
+```shell
+# 只推 GitHub
+git push github
+
+# 只推 CNB
+git push cnb
+
+# 同时推 GitHub + CNB
+git push
+git pushall
+```
 
 ## IP和网段
 PVE默认是vmbr0， 新建一个vmbr1,设置为10.10.10.0/24
