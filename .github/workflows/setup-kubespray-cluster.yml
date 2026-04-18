@@ -317,8 +317,8 @@ jobs:
 
           # sync kubeconfig from controlplane01 to local pve host
           [ -d ~/.kube ] || mkdir -p ~/.kube
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@10.10.10.11:/etc/kubernetes/admin.conf ~/.kube/local.kubeconfig 
-          chmod 600 ~/.kube/local.kubeconfig
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@10.10.10.11:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
+          chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig
           EOF
 
       # 10️⃣ 把 kubespray 的安装命令脚本和准备好的文件同步到 PVE 上
