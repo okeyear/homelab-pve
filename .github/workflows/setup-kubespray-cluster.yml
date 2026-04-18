@@ -307,7 +307,7 @@ jobs:
       # 9️⃣ 准备 kubespray 的安装命令脚本，包含安装前的准备和安装命令
       - name: prepare kubespray command on pve
         run: |
-          cd $GITHUB_WORKSPACE # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+          cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
           tee main.sh <<'EOF'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
