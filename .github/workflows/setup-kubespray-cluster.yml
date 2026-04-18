@@ -239,7 +239,11 @@ jobs:
 
           print(f"Generated {inventory_path} with {len(cp_lines)} control-plane and {len(node_lines)} node hosts")
           PY
-
+          tee -a inventory/${K8S_CLUSTER_NAME}/inventory.ini <<'EOF'
+          [k8s_cluster:children]
+          kube_control_plane
+          kube_node
+          EOF
           cat inventory/${K8S_CLUSTER_NAME}/inventory.ini
         env:
           VMS_JSON: ${{ github.event.inputs.VMs }}
