@@ -22,7 +22,7 @@ on:
         default: true
         type: boolean
 
-      skip_image::
+      skip_image:
         description: 'Skip OFFLINE images sync'
         required: true
         default: true
@@ -239,6 +239,9 @@ jobs:
           lines.append("[kube_control_plane]")
           lines.extend(cp_hosts)
           lines.append("")
+          lines.append("[calico_rr]")
+          lines.extend(cp_hosts)
+          lines.append("")
           lines.append("[kube_node]")
           lines.extend(node_hosts)
           lines.append("")
@@ -292,11 +295,11 @@ jobs:
           mkdir -p temp/images
           # 下载所有二进制文件
 
-          if skip_file != 'true'; then
+          if [ "${{ github.event.inputs.skip_file }}" != 'true' ]; then
             wget -x -P temp/files -i temp/files.list
           fi
 
-          if skip_image != 'true'; then
+          if [ "${{ github.event.inputs.skip_image }}" != 'true' ]; then
             # 把镜像同步到私有 registry 中（如果需要的话）
             for image in $(cat temp/images.list); do
               echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
