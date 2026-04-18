@@ -334,12 +334,6 @@ jobs:
 
           # 执行 kubespray 的安装命令
           ansible-playbook -i inventory/${CLUSTER_NAME}/inventory.ini cluster.yml -b -v
-          # ansible-playbook -i inventory/${CLUSTER_NAME}/inventory.ini fetch-kubeconfig.yml -b -v
-
-          # sync kubeconfig from controlplane01 to local pve host
-          [ -d ~/.kube ] || mkdir -p ~/.kube
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
-          chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig
           EOF
 
       # 10️⃣ 把 kubespray 的安装命令脚本和准备好的文件同步到 PVE 上
@@ -359,5 +353,9 @@ jobs:
       - name: debug
         run: |
           pwd
+          # sync kubeconfig from controlplane01 to local pve host
+          [ -d ~/.kube ] || mkdir -p ~/.kube
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
+          chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig          
           # echo ${{ github.ref }}
           # env
