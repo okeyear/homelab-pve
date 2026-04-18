@@ -252,8 +252,10 @@ jobs:
       - name: ansible add registry host entry and fetch kubeconfig
         run: |
           cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
+          REGISTRY_HOST="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
+          REGISTRY_HOST_REGEX="$(printf '%s' "$REGISTRY_HOST" | sed -E 's/[][(){}.+*^$\\|?]/\\\\&/g')"
           # 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话）
-          tee add-hosts-entry.yml <<'EOF'
+          tee add-hosts-entry.yml <<EOF
           ---
           - name: Ensure registry host entry is present on all nodes
             hosts: all  # 或者使用 'k8s-cluster' 等特定组
@@ -262,10 +264,10 @@ jobs:
               - name: Add registry host entry to /etc/hosts
                 ansible.builtin.lineinfile:
                   path: /etc/hosts
-                  line: '10.10.10.1 pve.taile80cb.ts.net'
+                  line: '10.10.10.1 ${REGISTRY_HOST}'
                   state: present
                   # 可选：使用正则表达式，确保不会重复添加
-                  regexp: '^10\.10\.10\.1\s+pve\.taile80cb\.ts\.net'
+                  regexp: '^10\.10\.10\.1\s+${REGISTRY_HOST_REGEX}$'
           EOF
 
       # 8️⃣ 准备离线包并同步镜像
@@ -321,7 +323,7 @@ jobs:
 
           # sync kubeconfig from controlplane01 to local pve host
           [ -d ~/.kube ] || mkdir -p ~/.kube
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@10.10.10.11:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
           chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig
           EOF
 
