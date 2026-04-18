@@ -209,7 +209,9 @@ jobs:
           mkdir -p temp/files
           mkdir -p temp/images
           # 下载所有二进制文件
-          wget -x -P temp/files -i temp/files.list
+          echo $GITHUB_WORKSPACE
+          pwd
+          # wget -x -P temp/files -i temp/files.list
 
           # sync images to registry
           # 4️⃣ 把镜像同步到私有 registry 中（如果需要的话
