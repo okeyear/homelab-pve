@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "[ 10 ] kubespray Setup k8s cluster"
+name: "[ 14 ] kubespray Setup k8s cluster"
 
 # Controls when the workflow will run
 on:
