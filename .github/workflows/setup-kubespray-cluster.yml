@@ -345,7 +345,7 @@ jobs:
           cd $GITHUB_WORKSPACE # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
           # rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
           # rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -a -q --stats ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -a --info=name0,stats2 ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
+          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -az --partial --inplace --info=name0,stats2 ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/kubespray/
 
       # 11️⃣ 通过 SSH 在 PVE 上执行 kubespray 的安装命令脚本，完成 Kubernetes 集群的部署
       - name: setup k8s via kubespray
