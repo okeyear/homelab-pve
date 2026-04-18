@@ -165,6 +165,8 @@ jobs:
           cd kubespray/
           cp -rfp inventory/sample inventory/${K8S_CLUSTER_NAME}
 
+          ls -l inventory/${K8S_CLUSTER_NAME}
+
       # 6️⃣ 动态生成 Ansible inventory
       - name: Ansible inventory
         run: |
