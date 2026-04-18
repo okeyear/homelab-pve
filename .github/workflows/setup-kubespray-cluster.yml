@@ -17,13 +17,13 @@ on:
           - ubuntu-latest
 
       skip_file:
-        description: 'Skip file preparation and registry sync steps'
+        description: 'Skip OFFLINE file download'
         required: true
         default: true
         type: boolean
 
       skip_image::
-        description: 'Skip syncing images to registry'
+        description: 'Skip OFFLINE images sync'
         required: true
         default: true
         type: boolean
