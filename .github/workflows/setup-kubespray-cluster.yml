@@ -354,8 +354,8 @@ jobs:
         run: |
           pwd
           # sync kubeconfig from controlplane01 to local pve host
-          [ -d ~/.kube ] || mkdir -p ~/.kube
-          rsync --rsync-path="sudo rsync" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig 
-          chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig          
+          # [ -d ~/.kube ] || mkdir -p ~/.kube
+          echo "rsync --rsync-path=\"sudo rsync\" -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace $VM_USER@${{ fromJson(github.event.inputs.VMs)[0] }}:/etc/kubernetes/admin.conf ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig"
+          echo chmod 600 ~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig          
           # echo ${{ github.ref }}
           # env
