@@ -83,9 +83,35 @@ jobs:
 
       - name: Install OS base packages
         run: |
-          sudo apt-get update -yq && sudo apt-get install -yq sshpass skopeo python3 python3-pip python3-venv jq
-        #   wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-        #   sudo install -m 755 yq_linux_amd64 /usr/bin/yq
+          missing_pkgs=()
+          # package -> command mapping
+          declare -A pkg_cmd=(
+            [skopeo]=skopeo
+            [python3]=python3
+            [python3-pip]=pip3
+            [python3-venv]=python3
+            [jq]=jq
+          )
+
+          for pkg in skopeo python3 python3-pip python3-venv jq; do
+            cmd="${pkg_cmd[$pkg]}"
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+              missing_pkgs+=("$pkg")
+            fi
+          done
+
+          if [ ${#missing_pkgs[@]} -gt 0 ]; then
+            echo "Installing missing packages: ${missing_pkgs[*]}"
+            sudo apt-get update -yq >/dev/null
+            sudo apt-get install -yq "${missing_pkgs[@]}" >/dev/null
+          else
+            echo "All required commands already exist."
+          fi
+
+          if ! command -v yq >/dev/null 2>&1; then
+            wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo install -m 755 yq_linux_amd64 /usr/bin/yq
+          fi          
 
       - name: Check if already ssh key-based
         id: check-ssh
