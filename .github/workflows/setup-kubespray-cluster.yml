@@ -116,6 +116,9 @@ jobs:
             echo "All required commands already exist."
           fi
 
+          # # externally-managed-environment 错误的临时解决方法，后续可以改为在 runner 上正确设置 Python 环境
+          sudo rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+
           if ! command -v yq >/dev/null 2>&1; then
             wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo install -m 755 yq_linux_amd64 /usr/bin/yq
