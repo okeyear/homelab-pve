@@ -164,10 +164,9 @@ jobs:
           source ~/.bashrc
           export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           kubectl get nodes -o wide
-
           cd /root
-          # kubectl apply -f components.yaml
-          
+          kubectl apply -f components.yaml
+          kubectl get pod -n kube-system | grep metrics-server
           EOF
 
       # # 5️⃣ 下载 kubespray 仓库，并复制 sample inventory 作为基础
