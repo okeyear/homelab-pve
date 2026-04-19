@@ -351,41 +351,33 @@ jobs:
           # 4. 业务证书 / Ingress TLS / Gateway TLS
 
           tee cert-manager-config.yaml <<'ENOF'
-          ---
-          # 参考：https://cert-manager.io/docs/configuration/selfsigned/
-          #  ① SelfSigned 引导 Issuer
+          # ① SelfSigned 引导 Issuer
           apiVersion: cert-manager.io/v1
           kind: ClusterIssuer
           metadata:
             name: selfsigned-bootstrap
           spec:
             selfSigned: {}
+
           ---
-          #  ② 根 CA 证书（由引导 Issuer 签发）
+          # ② 根 CA 证书（由引导 Issuer 签发）
           apiVersion: cert-manager.io/v1
           kind: Certificate
           metadata:
-            name: selfsigned-root-ca-certificate
-            # 如果要根据此CA创建ClusterIssuer（集群范围）必须在cert-manager命名空间
+            name: selfsigned-root-ca
+            # ClusterIssuer 签发的 CA 证书建议放在 cert-manager 命名空间
             namespace: cert-manager
           spec:
             isCA: true
-            commonName: "ca.example.com"
-            secretName: selfsigned-root-ca-certificate-tls
-            # 100年
-            duration: 876000h
-            # # 提前30天续期
-            renewBefore: 720h
-            # # 证书信息
-            # subject:
-            #   countries:
-            #   - China
-            #   localities:
-            #   - BeiJing
-            #   organizations:
-            #   - example
-            #   organizationalUnits:
-            #   - devops
+            commonName: "${{ github.event.inputs.K8S_CLUSTER_NAME }} Kubernetes Root CA"
+            subject:
+              organizations:
+                - "My Org"
+              countries:
+                - "CN"
+            secretName: selfsigned-root-ca-secret
+            duration: 876000h    # 100年
+            renewBefore: 720h   # 提前30天续期
             privateKey:
               algorithm: ECDSA
               size: 256
@@ -393,16 +385,16 @@ jobs:
               name: selfsigned-bootstrap
               kind: ClusterIssuer
               group: cert-manager.io
+
           ---
-          # ③ CA ClusterIssuer（用根 CA 证书签发业务证书）  
-          # 基于CA创建ClusterIssuer
+          # ③ CA ClusterIssuer（用根 CA 证书签发业务证书）
           apiVersion: cert-manager.io/v1
           kind: ClusterIssuer
           metadata:
             name: selfsigned-ca-issuer
           spec:
             ca:
-              secretName: selfsigned-root-ca-certificate-tls          
+              secretName: selfsigned-root-ca-secret  # 引用上面创建的根 CA Secret       
           ENOF
           kubectl apply -f cert-manager-config.yaml
           EOF
