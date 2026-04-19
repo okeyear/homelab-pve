@@ -23,7 +23,7 @@ on:
         default: 'mycluster'
 
       all_enable:
-        description: 'Enable ALL(below components) with one click, it will override individual settings'
+        description: 'Enable ALL(below components) except nfs provisioner'
         required: true
         default: false
         type: boolean
@@ -52,6 +52,14 @@ on:
         default: false
         type: boolean 
 
+      csi_nfs:
+        description: 'nfs二选一: nfs-subdir-external-provisioner(默认) 或 csi-driver-nfs'
+        required: true
+        default: nfs-subdir-external-provisioner
+        type: choice
+        options:
+          - nfs-subdir-external-provisioner
+          - csi-driver-nfs
 
 
       # k8s_version:
@@ -405,29 +413,67 @@ jobs:
           kubectl apply -f cert-manager-config.yaml
           EOF
 
-      # # 8️⃣ 准备离线包并同步镜像
-      # - name: prepare offline packages and sync to registry (if needed)
-      #   run: |
-      #     cd $GITHUB_WORKSPACE/kubespray/contrib/offline  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
-      #     bash generate_list.sh
-      #     # 创建下载目录
-      #     mkdir -p temp/files
-      #     mkdir -p temp/images
-      #     # 下载所有二进制文件
+      # 8️⃣ nfs-subdir-external-provisioner
+      - name: nfs-subdir-external-provisioner
+        if: github.event.inputs.csi_nfs == 'nfs-subdir-external-provisioner'
+        run: |
+          # 1. 在runner上下载 nfs-subdir-external-provisioner 的 manifests.yaml，并且修改镜像地址
+          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
+          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
+          echo "临时目录路径: $temp_dir"
+          cd $temp_dir
 
-      #     if [ "${{ github.event.inputs.skip_file }}" != 'true' ]; then
-      #       wget -x -P temp/files -i temp/files.list
-      #     fi
+          tee install-nfs-client-all-nodes.sh <<'EOF'
+          #!/bin/bash
+          set -e
+          # 该脚本用于在 Kubernetes 集群的所有节点上安装 NFS 客户端，确保 CSI NFS Driver 能够正常工作
+          # 1. 获取集群中所有节点的 IP 地址
+          nodes=$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}')
+          echo "集群节点 IP 地址："
+          echo "$nodes"
+          # 2. 在每个节点上安装 NFS 客户端
+          for node in $nodes; do
+            echo "正在安装 NFS 客户端到节点 $node..."
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@$node "sudo apt-get install -y nfs-common || sudo yum install -y nfs-utils"
+            echo "节点 $node 上的 NFS 客户端安装完成。"
+          done
+          EOF
+          
+          # install nfs-subdir-external-provisioner
+          helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+          helm repo update
+          helm pull nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+          mv nfs-subdir-external-provisioner-*.tgz nfs-subdir-external-provisioner.tgz
 
-      #     if [ "${{ github.event.inputs.skip_image }}" != 'true' ]; then
-      #       # 把镜像同步到私有 registry 中（如果需要的话）
-      #       for image in $(cat temp/images.list); do
-      #         echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
-      #         skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
-      #       done
-      #     fi
+          images=$(helm template nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner |awk '/image:/ {print $2}' | sed 's@"@@g')
+          for image in $images; do
+            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" nfs-csi-driver.yaml
+          done
 
-      # # 9️⃣ 准备 kubespray 的安装命令脚本，包含安装前的准备和安装命令
+          # 2. rsync到pve上
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+          # 3. 到pve上执行
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          cd /root
+          bash install-nfs-client-all-nodes.sh
+          helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner.tgz -n kube-system \
+            --set image.repository=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/sig-storage/nfs-subdir-external-provisioner \
+            --set nfs.server=10.10.10.1 \
+            --set nfs.path=/nfs
+          EOF
+      
+
+      # 9️⃣ csi-driver-nfs
+      - name: csi-driver-nfs
+        if: github.event.inputs.csi_nfs == 'csi-driver-nfs'
+        run: |
+          echo pending
+          
       # - name: prepare kubespray command on pve
       #   run: |
       #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
