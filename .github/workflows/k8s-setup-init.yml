@@ -22,22 +22,28 @@ on:
         type: string
         default: 'mycluster'
 
+      all_enable:
+        description: 'Enable all below components'
+        required: true
+        default: false
+        type: boolean
+
       metricsserver_enable:
         description: 'Enable Metrics-Server'
         required: true
-        default: true
+        default: false
         type: boolean
 
       metallb_enable:
         description: 'Enable MetalLB'
         required: true
-        default: true
+        default: false
         type: boolean
 
       traefik_enable:
         description: 'Enable Traefik Ingress Controller'
         required: true
-        default: true
+        default: false
         type: boolean
 
       # k8s_version:
@@ -147,7 +153,7 @@ jobs:
 
       # 4️⃣ metrics-server
       - name: metrics-server
-        if: ${{ github.event.inputs.metricsserver_enable == 'true' }}
+        if: ${{ github.event.inputs.metricsserver_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
         run: |
           # 1. 在runner上下载 metrics-server 的 components.yaml，并且修改启动参数，添加 --kubelet-insecure-tls
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -177,7 +183,7 @@ jobs:
 
       # 5️⃣ metalLB
       - name: MetalLB
-        if: ${{ github.event.inputs.metallb_enable == 'true' }}
+        if: ${{ github.event.inputs.metallb_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
         run: |
           function get_github_latest_release() {
               curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
@@ -238,7 +244,7 @@ jobs:
 
       # 6️⃣ traefik
       - name: Traefik Ingress Controller
-        if: ${{ github.event.inputs.traefik_enable == 'true' }}
+        if: ${{ github.event.inputs.traefik_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
         run: |
           # 1. 在runner上下载 traefik 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -257,7 +263,7 @@ jobs:
           tee traefik-value.yaml <<ENDFF
           image:
             registry: ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000
-            repository: k8s/${image#*/}
+            repository: k8s/traefik
             tag: ${image_tag}
             pullPolicy: IfNotPresent          
           ENDFF
