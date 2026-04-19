@@ -23,7 +23,7 @@ on:
         default: 'mycluster'
 
       all_enable:
-        description: 'Enable all below components'
+        description: 'Enable ALL below components'
         required: true
         default: false
         type: boolean
@@ -151,9 +151,9 @@ jobs:
           version: latest # https://pkgs.tailscale.com/stable/#static
           use-cache: 'true'
 
-      # 4️⃣ metrics-server
-      - name: metrics-server
-        if: ${{ github.event.inputs.metricsserver_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
+      # 4️⃣ Metrics-Server
+      - name: Metrics-Server
+        if: ${{ github.event.inputs.metricsserver_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         run: |
           # 1. 在runner上下载 metrics-server 的 components.yaml，并且修改启动参数，添加 --kubelet-insecure-tls
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -183,7 +183,7 @@ jobs:
 
       # 5️⃣ metalLB
       - name: MetalLB
-        if: ${{ github.event.inputs.metallb_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
+        if: ${{ github.event.inputs.metallb_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         run: |
           function get_github_latest_release() {
               curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
@@ -242,9 +242,9 @@ jobs:
           kubectl apply -f metallb-config.yaml
           EOF
 
-      # 6️⃣ traefik
+      # 6️⃣ Traefik Ingress Controller
       - name: Traefik Ingress Controller
-        if: ${{ github.event.inputs.traefik_enable == 'true' }} || ${{ github.event.inputs.all_enable == 'true' }}
+        if: ${{ github.event.inputs.traefik_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         run: |
           # 1. 在runner上下载 traefik 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -280,27 +280,45 @@ jobs:
           helm install traefik traefik.tgz -n traefik-ingress -f traefik-value.yaml 
           EOF
 
-      # # 7️⃣ 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话），并且准备离线安装需要的文件和镜像
-      # - name: ansible add registry host entry and fetch kubeconfig
-      #   run: |
-      #     cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
-      #     REGISTRY_HOST="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
-      #     REGISTRY_HOST_REGEX="$(printf '%s' "$REGISTRY_HOST" | sed -E 's/[][(){}.+*^$\\|?]/\\\\&/g')"
-      #     # 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话）
-      #     tee add-hosts-entry.yml <<EOF
-      #     ---
-      #     - name: Ensure registry host entry is present on all nodes
-      #       hosts: all  # 或者使用 'k8s-cluster' 等特定组
-      #       become: yes  # 修改 /etc/hosts 需要 root 权限
-      #       tasks:
-      #         - name: Add registry host entry to /etc/hosts
-      #           ansible.builtin.lineinfile:
-      #             path: /etc/hosts
-      #             line: '10.10.10.1 ${REGISTRY_HOST}'
-      #             state: present
-      #             # 可选：使用正则表达式，确保不会重复添加
-      #             regexp: '^10\.10\.10\.1\s+${REGISTRY_HOST_REGEX}$'
-      #     EOF
+      # 7️⃣ Cert Manager
+      - name: cert-manager
+        if: ${{ github.event.inputs.certmanager_enable == 'true' || github.event.inputs.all_enable == 'true' }}
+        run: |
+          # 1. 在runner上下载 cert-manager 的 manifests.yaml，并且修改镜像地址
+          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
+          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
+          echo "临时目录路径: $temp_dir"
+          cd $temp_dir
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm search repo jetstack/cert-manager --versions | head # v1.20.2
+          helm pull jetstack/cert-manager
+
+          version=$(helm search repo jetstack/cert-manager --versions | awk 'NR==2 {print $2}')
+          mv cert-manager-${version}.tgz cert-manager.tgz
+          images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}')
+          for image in $images; do
+            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+          done
+
+          # 2. rsync到pve上
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+          # 3. 到pve上执行
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          cd /root
+          kubectl create ns cert-manager
+          helm upgrade --install \
+            cert-manager cert-manager.tgz \
+            --namespace cert-manager \
+            --create-namespace \
+            --set prometheus.enabled=false \
+            --set webhook.timeoutSeconds=4 \
+            --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
+          EOF
 
       # # 8️⃣ 准备离线包并同步镜像
       # - name: prepare offline packages and sync to registry (if needed)
