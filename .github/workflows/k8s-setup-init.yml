@@ -78,9 +78,8 @@ env:
   # NODE01_IP: 10.10.10.101
   # NODE02_IP: 10.10.10.102
   # VMs: ${{ github.event.inputs.VMs }}
-  K8S_CLUSTER_NAME: ${{ github.event.inputs.K8S_CLUSTER_NAME }}
+  # K8S_CLUSTER_NAME: ${{ github.event.inputs.K8S_CLUSTER_NAME }}
   VM_USER: ${{ github.event.inputs.vm_user }}
-  KUBECONFIG: ~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -96,43 +95,43 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v5
+      # - uses: actions/checkout@v5
 
-      # 1️⃣ 安装基础依赖
-      - name: Install OS base packages
-        run: |
-          missing_pkgs=()
-          # package -> command mapping
-          declare -A pkg_cmd=(
-            [skopeo]=skopeo
-            [python3]=python3
-            [python3-pip]=pip3
-            [python3-venv]=python3
-            [jq]=jq
-          )
+      # # 1️⃣ 安装基础依赖
+      # - name: Install OS base packages
+      #   run: |
+      #     missing_pkgs=()
+      #     # package -> command mapping
+      #     declare -A pkg_cmd=(
+      #       [skopeo]=skopeo
+      #       [python3]=python3
+      #       [python3-pip]=pip3
+      #       [python3-venv]=python3
+      #       [jq]=jq
+      #     )
 
-          for pkg in skopeo python3 python3-pip python3-venv jq; do
-            cmd="${pkg_cmd[$pkg]}"
-            if ! command -v "$cmd" >/dev/null 2>&1; then
-              missing_pkgs+=("$pkg")
-            fi
-          done
+      #     for pkg in skopeo python3 python3-pip python3-venv jq; do
+      #       cmd="${pkg_cmd[$pkg]}"
+      #       if ! command -v "$cmd" >/dev/null 2>&1; then
+      #         missing_pkgs+=("$pkg")
+      #       fi
+      #     done
 
-          if [ ${#missing_pkgs[@]} -gt 0 ]; then
-            echo "Installing missing packages: ${missing_pkgs[*]}"
-            sudo apt-get update -yq >/dev/null
-            sudo apt-get install -yq "${missing_pkgs[@]}" >/dev/null
-          else
-            echo "All required commands already exist."
-          fi
+      #     if [ ${#missing_pkgs[@]} -gt 0 ]; then
+      #       echo "Installing missing packages: ${missing_pkgs[*]}"
+      #       sudo apt-get update -yq >/dev/null
+      #       sudo apt-get install -yq "${missing_pkgs[@]}" >/dev/null
+      #     else
+      #       echo "All required commands already exist."
+      #     fi
 
-          # # externally-managed-environment 错误的临时解决方法，后续可以改为在 runner 上正确设置 Python 环境
-          sudo rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+      #     # # externally-managed-environment 错误的临时解决方法，后续可以改为在 runner 上正确设置 Python 环境
+      #     sudo rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
 
-          if ! command -v yq >/dev/null 2>&1; then
-            wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            sudo install -m 755 yq_linux_amd64 /usr/bin/yq
-          fi          
+      #     if ! command -v yq >/dev/null 2>&1; then
+      #       wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+      #       sudo install -m 755 yq_linux_amd64 /usr/bin/yq
+      #     fi          
 
       # 2️⃣ 检查 tailscale SSH 免密状态
       - name: Check if already ssh key-based
@@ -164,7 +163,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
           source ~/.bashrc
-          export KUBECONFIG=~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           kubectl get nodes -o wide
           EOF
 
