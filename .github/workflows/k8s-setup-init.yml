@@ -59,7 +59,7 @@ on:
         type: choice
         options:
           - nfs-subdir-external-provisioner
-          - csi-driver-nfs
+          - csi-driver-nfs(pending todo)
 
 
       # k8s_version:
@@ -473,7 +473,7 @@ jobs:
         if: github.event.inputs.csi_nfs == 'csi-driver-nfs'
         run: |
           echo pending
-          
+
       # - name: prepare kubespray command on pve
       #   run: |
       #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
