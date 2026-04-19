@@ -23,7 +23,7 @@ on:
         default: 'mycluster'
 
       all_enable:
-        description: 'Enable ALL below components'
+        description: 'Enable ALL(below components) with one click, it will override individual settings'
         required: true
         default: false
         type: boolean
