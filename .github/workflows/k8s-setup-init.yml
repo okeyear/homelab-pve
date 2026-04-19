@@ -101,7 +101,6 @@ jobs:
       # 1️⃣ 安装基础依赖
       - name: Install OS base packages
         run: |
-          source ~/.bashrc
           missing_pkgs=()
           # package -> command mapping
           declare -A pkg_cmd=(
@@ -135,36 +134,39 @@ jobs:
             sudo install -m 755 yq_linux_amd64 /usr/bin/yq
           fi          
 
-      # 2️⃣ 检查 
+      # 2️⃣ 检查 tailscale SSH 免密状态
       - name: Check if already ssh key-based
+        id: check-ssh
         run: |
-          source ~/.bashrc
           set +e
+          test -d ~/.ssh || mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=5  root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} exit
+          if [ $? -eq 0 ]; then
+            echo "keyless=true" >> $GITHUB_OUTPUT
+          else
+            echo "keyless=false" >> $GITHUB_OUTPUT
+          fi      
+
+      # 3️⃣  把 Runner 接入 tailnet
+      - name: setup Tailscale Connect (if needed)
+        if: steps.check-ssh.outputs.keyless != 'true'
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          version: latest # https://pkgs.tailscale.com/stable/#static
+          use-cache: 'true'
+
+      # 4️⃣ kubectl
+      - name: kubectl
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ env.K8S_CLUSTER_NAME }}.kubeconfig
           kubectl get nodes -o wide
-               
-
-      # # 3️⃣  把 Runner 接入 tailnet
-      # - name: setup Tailscale Connect (if needed)
-      #   if: steps.check-ssh.outputs.keyless != 'true'
-      #   uses: tailscale/github-action@v3
-      #   with:
-      #     oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      #     oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
-      #     tags: tag:ci     # 与 ACL 中的 tag 保持一致
-      #     version: latest # https://pkgs.tailscale.com/stable/#static
-      #     use-cache: 'true'
-
-      # # 4️⃣ install Ansible
-      # - name: install ansible
-      #   run: |
-      #     if ! command -v ansible &>/dev/null; then
-      #       pip install ansible-core==2.18.3 netaddr 
-      #       ansible-galaxy collection install ansible.posix \
-      #         community.general \
-      #         community.crypto \
-      #         kubernetes.core \
-      #         ansible.utils
-      #     fi
+          EOF
 
       # # 5️⃣ 下载 kubespray 仓库，并复制 sample inventory 作为基础
       # - name: download kubespray git repository
