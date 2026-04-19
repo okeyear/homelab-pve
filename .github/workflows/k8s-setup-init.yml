@@ -207,6 +207,9 @@ jobs:
           kubectl get nodes -o wide
           cd /root
           kubectl apply -f metallb-native.yaml
+          kubectl rollout status deployment/controller -n metallb-system --timeout=180s
+          kubectl rollout status daemonset/speaker -n metallb-system --timeout=180s
+          kubectl wait --for=condition=Ready pod -n metallb-system --all --timeout=180s
           kubectl get pod -n metallb-system
 
           tee metallb-config.yaml <<ENDOF
@@ -229,6 +232,7 @@ jobs:
             ipAddressPools:
             - first-pool
           ENDOF
+          # 
           kubectl apply -f metallb-config.yaml
           EOF
 
