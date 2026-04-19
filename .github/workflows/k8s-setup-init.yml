@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "[ 21 ] k8s clusterinit settings"
+name: "[ 21 ] k8s cluster init settings"
 # TODO:
 # 1. 网络模式选择
 # 2. addons 选择
@@ -10,11 +10,41 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'Runner Agent'
+        required: true
+        default: self-hosted
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+      K8S_CLUSTER_NAME:
+        description: 'Kubernetes cluster name'
+        required: true
+        type: string
+        default: 'mycluster'
+
       skip_file:
         description: 'Skip OFFLINE file download'
         required: true
         default: true
         type: boolean
+
+      skip_image:
+        description: 'Skip OFFLINE images sync'
+        required: true
+        default: true
+        type: boolean
+
+      vm_user:
+        description: 'VM Guest: OS User'
+        required: true
+        default: vagrant
+        type: choice
+        options:
+          - vagrant
+          - root
 
       K8S_CLUSTER_NAME:
         description: 'Kubernetes cluster name'
@@ -40,8 +70,8 @@ on:
       #     - '1.35'
 
 env:
-  # TAILSCALE_HOST: pve
-  # TAILSCALE_NET: taile80cb.ts.net
+  TAILSCALE_HOST: pve
+  TAILSCALE_NET: taile80cb.ts.net
   # VM_TEMPLATE_ID: 2009 # vm模板的ID
   # VM_CIDR: 10.10.10 # vmbr0 vmbr1 的网段
   # MASTER_IP: 10.10.10.11
@@ -49,24 +79,24 @@ env:
   # NODE02_IP: 10.10.10.102
   # VMs: ${{ github.event.inputs.VMs }}
   K8S_CLUSTER_NAME: ${{ github.event.inputs.K8S_CLUSTER_NAME }}
+  VM_USER: ${{ github.event.inputs.vm_user }}
   KUBECONFIG: ~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
-  # VM_USER: ${{ github.event.inputs.vm_user }}
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
   setup:
-    name: 🚀 init k8s settings
+    name: 🚀 Deploy k8s via kubespray
     # The type of runner that the job will run on
     # runs-on: [self-hosted]
     # runs-on: ubuntu-latest
-    runs-on: pve
+    runs-on: ${{ github.event.inputs.runner }}
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      # - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
       # 1️⃣ 安装基础依赖
       - name: Install OS base packages
@@ -106,10 +136,12 @@ jobs:
           fi          
 
       # 2️⃣ 检查 
-      - name: Check kubectl
+      - name: Check if already ssh key-based
         run: |
+          source ~/.bashrc
           set +e
-          kubectl get node -o wide
+          kubectl get nodes -o wide
+               
 
       # # 3️⃣  把 Runner 接入 tailnet
       # - name: setup Tailscale Connect (if needed)
