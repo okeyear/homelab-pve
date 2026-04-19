@@ -26,7 +26,7 @@ on:
         default: 'mycluster'
 
       metricsserver_enable:
-        description: 'Enable Metrics Server'
+        description: 'Enable Metrics-Server'
         required: true
         default: true
         type: boolean
@@ -169,14 +169,62 @@ jobs:
           kubectl get pod -n kube-system | grep metrics-server
           EOF
 
-      # # 5️⃣ 下载 kubespray 仓库，并复制 sample inventory 作为基础
-      # - name: download kubespray git repository
-      #   run: |
-      #     git clone https://github.com/kubernetes-sigs/kubespray.git
-      #     cd kubespray/
-      #     cp -rfp inventory/sample inventory/${K8S_CLUSTER_NAME}
+      # 5️⃣ metalLB
+      - name: MetalLB
+        if: ${{ github.event.inputs.metallb_enable == 'true' }}
+        run: |
+          function get_github_latest_release() {
+              curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+              grep '"tag_name":' |                                            # Get tag line
+              sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
+          }
+          metallb_ver=$(get_github_latest_release metallb/metallb)
 
-      #     ls -l inventory/${K8S_CLUSTER_NAME}
+          # 1. 在runner上下载 metallb 的 metallb.yaml，并且修改镜像地址
+          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
+          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
+          echo "临时目录路径: $temp_dir"
+          cd $temp_dir
+          wget -c https://raw.githubusercontent.com/metallb/metallb/${metallb_ver}/config/manifests/metallb-native.yaml
+          images=$(awk '/image:/ {print $2}' metallb-native.yaml)
+          for image in $images; do
+            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" metallb-native.yaml
+          done
+          # 2. rsync到pve上
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace metallb-native.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          # 3. 到pve上执行
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          kubectl get nodes -o wide
+          cd /root
+          kubectl apply -f metallb-native.yaml
+          kubectl get pod -n metallb-system
+
+          tee metallb-config.yaml <<ENDOF
+          apiVersion: metallb.io/v1beta1
+          kind: IPAddressPool
+          metadata:
+            name: first-pool
+            namespace: metallb-system
+          spec:
+            addresses:
+            # 可分配的 IP 地址,可以指定多个，包括 ipv4、ipv6
+            - 10.10.10.120-10.10.10.167
+          ---
+          apiVersion: metallb.io/v1beta1
+          kind: L2Advertisement
+          metadata:
+            name: example
+            namespace: metallb-system
+          spec:
+            ipAddressPools:
+            - first-pool
+          ENDOF
+          kubectl apply -f metallb-config.yaml
+          EOF
 
       # # 6️⃣ 动态生成 Ansible inventory
       # - name: Ansible inventory
