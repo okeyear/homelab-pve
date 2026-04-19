@@ -1,9 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
 name: "[ 21 ] k8s cluster init settings"
-# TODO:
-# 1. 网络模式选择
-# 2. addons 选择
 
 # Controls when the workflow will run
 on:
@@ -13,7 +10,7 @@ on:
       runner:
         description: 'Runner Agent'
         required: true
-        default: self-hosted
+        default: ubuntu-latest
         type: choice
         options:
           - self-hosted
@@ -37,6 +34,11 @@ on:
         default: true
         type: boolean
 
+      traefik_enable:
+        description: 'Enable Traefik Ingress Controller'
+        required: true
+        default: true
+        type: boolean
 
       # k8s_version:
       #   description: 'supported stable k8s version https://kubernetes.io/releases/'
@@ -113,6 +115,10 @@ jobs:
             wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo install -m 755 yq_linux_amd64 /usr/bin/yq
           fi          
+
+          if ! command -v helm >/dev/null 2>&1; then
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+          fi    
 
       # 2️⃣ 检查 tailscale SSH 免密状态
       - name: Check if already ssh key-based
@@ -226,95 +232,43 @@ jobs:
           kubectl apply -f metallb-config.yaml
           EOF
 
-      # # 6️⃣ 动态生成 Ansible inventory
-      # - name: Ansible inventory
-      #   run: |
-      #     cd $GITHUB_WORKSPACE/kubespray  # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
-      #     # 根据 workflow_dispatch 输入的 VMs(JSON 数组)动态生成 inventory.ini
-      #     python3 - <<'PY'
-      #     import json
-      #     import os
-      #     import sys
+      # 6️⃣ traefik
+      - name: Traefik Ingress Controller
+        if: ${{ github.event.inputs.traefik_enable == 'true' }}
+        run: |
+          # 1. 在runner上下载 traefik 的 manifests.yaml，并且修改镜像地址
+          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
+          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
+          echo "临时目录路径: $temp_dir"
+          cd $temp_dir
+          helm repo add traefik https://helm.traefik.io/traefik
+          helm repo update
+          helm pull traefik/traefik
+          mv traefik-*.tgz traefik.tgz 
+          image=$(helm template traefik.tgz | awk '/image:/ {print $2}')
+          image_tag=$(echo $image | awk -F: '{print $2}')
 
-      #     vms_raw = os.environ.get("VMS_JSON", "")
-      #     vm_user = os.environ.get("VM_USER", "vagrant")
-      #     cluster_name = os.environ.get("K8S_CLUSTER_NAME", "mycluster")
+          echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+          skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+          tee traefik-value.yaml <<ENDFF
+          image:
+            registry: ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000
+            repository: k8s/${image#*/}
+            tag: ${image_tag}
+            pullPolicy: IfNotPresent          
+          ENDFF
 
-      #     try:
-      #       vms = json.loads(vms_raw)
-      #     except Exception as e:
-      #       print(f"Invalid VMs JSON: {e}", file=sys.stderr)
-      #       sys.exit(1)
+          # 2. rsync到pve上
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
 
-      #     if not isinstance(vms, list) or not vms:
-      #       print("VMs must be a non-empty JSON array", file=sys.stderr)
-      #       sys.exit(1)
-
-      #     cp_hosts = []
-      #     node_hosts = []
-      #     all_lines = ["[all]"]
-      #     cp_index = 1
-      #     node_index = 1
-
-      #     for ip in vms:
-      #       if not isinstance(ip, str):
-      #         print(f"Invalid IP item (not string): {ip}", file=sys.stderr)
-      #         sys.exit(1)
-
-      #       parts = ip.split(".")
-      #       if len(parts) != 4:
-      #         print(f"Invalid IPv4 address: {ip}", file=sys.stderr)
-      #         sys.exit(1)
-
-      #       try:
-      #         last = int(parts[-1])
-      #       except ValueError:
-      #         print(f"Invalid IPv4 last octet: {ip}", file=sys.stderr)
-      #         sys.exit(1)
-
-      #       if last < 100:
-      #         host = f"k8s-cp-{cp_index:02d}"
-      #         cp_index += 1
-      #         cp_hosts.append(host)
-      #       elif last > 100:
-      #         host = f"k8s-node-{node_index:02d}"
-      #         node_index += 1
-      #         node_hosts.append(host)
-      #       else:
-      #         print(f"Unsupported IP by rule (last octet == 100): {ip}", file=sys.stderr)
-      #         sys.exit(1)
-
-      #       all_lines.append(f"{host} ansible_host={ip} ip={ip} ansible_user={vm_user}")
-
-      #     lines = []
-      #     lines.extend(all_lines)
-      #     lines.append("")
-      #     lines.append("[etcd]")
-      #     lines.extend(cp_hosts)
-      #     lines.append("")
-      #     lines.append("[kube_control_plane]")
-      #     lines.extend(cp_hosts)
-      #     lines.append("")
-      #     lines.append("[kube_node]")
-      #     lines.extend(node_hosts)
-      #     lines.append("")
-      #     lines.append("[lb]")
-      #     lines.extend(cp_hosts)
-      #     lines.append("")
-      #     lines.append("[k8s_cluster:children]")
-      #     lines.append("kube_control_plane")
-      #     lines.append("kube_node")
-      #     lines.append("")
-
-      #     inventory_path = f"inventory/{cluster_name}/inventory.ini"
-      #     with open(inventory_path, "w", encoding="utf-8") as f:
-      #       f.write("\n".join(lines))
-
-      #     print(f"Generated {inventory_path} with {len(cp_hosts)} control-plane and {len(node_hosts)} node hosts")
-      #     PY
-      #     cat inventory/${K8S_CLUSTER_NAME}/inventory.ini
-      #   env:
-      #     VMS_JSON: ${{ github.event.inputs.VMs }}
+          # 3. 到pve上执行
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          cd /root
+          kubectl create ns traefik-ingress
+          helm install traefik traefik.tgz -n traefik-ingress -f traefik-value.yaml 
+          EOF
 
       # # 7️⃣ 把 registry host 添加到所有节点的 /etc/hosts 中（如果需要的话），并且准备离线安装需要的文件和镜像
       # - name: ansible add registry host entry and fetch kubeconfig
