@@ -95,6 +95,9 @@ jobs:
     # runs-on: [self-hosted]
     # runs-on: ubuntu-latest
     runs-on: ${{ github.event.inputs.runner }}
+    env:
+      BASH_ENV: ${{ runner.temp }}/bash_env.sh
+      GITHUB_TOKEN: ${{ github.token }}
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
     # Steps represent a sequence of tasks that will be executed as part of the job
@@ -167,6 +170,41 @@ jobs:
           version: latest # https://pkgs.tailscale.com/stable/#static
           use-cache: 'true'
 
+      # 3.5️⃣ 初始化整个 job 可复用的 shell 函数
+      - name: Init shared shell functions
+        shell: bash
+        run: |
+          cat > "$BASH_ENV" <<'EOF'
+          get_github_latest_release() {
+            local repo="$1"
+            local api="https://api.github.com/repos/${repo}/releases/latest"
+            local max_retries=3
+            local attempt=1
+            local tag
+
+            while [[ $attempt -le $max_retries ]]; do
+              if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+                tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" "$api" | jq -r '.tag_name // empty')"
+              else
+                tag="$(curl -fsSL "$api" | jq -r '.tag_name // empty')"
+              fi
+
+              if [[ -n "$tag" ]]; then
+                echo "$tag"
+                return 0
+              fi
+
+              echo "Attempt ${attempt}/${max_retries} failed: ${repo}" >&2
+              attempt=$((attempt + 1))
+              sleep $((attempt * 2))
+            done
+
+            echo "Failed to fetch latest release for ${repo}" >&2
+            return 1
+          }
+          EOF
+          chmod 600 "$BASH_ENV"
+
       # 4️⃣ Metrics-Server
       - name: Metrics-Server
         if: ${{ github.event.inputs.metricsserver_enable == 'true' || github.event.inputs.all_enable == 'true' }}
@@ -200,13 +238,14 @@ jobs:
       # 5️⃣ metalLB
       - name: MetalLB
         if: ${{ github.event.inputs.metallb_enable == 'true' || github.event.inputs.all_enable == 'true' }}
+        shell: bash
         run: |
-          function get_github_latest_release() {
-              curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
-              grep '"tag_name":' |                                            # Get tag line
-              sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
-          }
           metallb_ver=$(get_github_latest_release metallb/metallb)
+          if [[ -z "$metallb_ver" ]]; then
+            echo "Failed to resolve metallb latest release version" >&2
+            exit 1
+          fi
+          echo "Using metallb version: $metallb_ver"
 
           # 1. 在runner上下载 metallb 的 metallb.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -299,14 +338,8 @@ jobs:
       # 7️⃣ Cert Manager
       - name: cert-manager
         if: ${{ github.event.inputs.certmanager_enable == 'true' || github.event.inputs.all_enable == 'true' }}
+        shell: bash
         run: |
-          function get_github_latest_release() {
-              curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
-              grep '"tag_name":' |                                            # Get tag line
-              sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
-          }
-
-          
           # 1. 在runner上下载 cert-manager 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
           trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
@@ -320,6 +353,11 @@ jobs:
           # mv cert-manager-${version}.tgz cert-manager.tgz
           # images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}' | sed 's@"@@g')
           version=$(get_github_latest_release "cert-manager/cert-manager")
+          if [[ -z "$version" ]]; then
+            echo "Failed to resolve cert-manager latest release version" >&2
+            exit 1
+          fi
+          echo "Using cert-manager version: $version"
           wget -c https://github.com/cert-manager/cert-manager/releases/download/${version}/cert-manager.yaml
           images=$(awk '/image:/ {print $2}' cert-manager.yaml | sed 's@"@@g')
           for image in $images; do
