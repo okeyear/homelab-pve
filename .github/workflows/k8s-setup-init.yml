@@ -323,6 +323,7 @@ jobs:
             cert-manager cert-manager.tgz \
             --namespace cert-manager \
             --create-namespace \
+            --set installCRDs=true \
             --set prometheus.enabled=false \
             --set webhook.timeoutSeconds=4 \
             --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
