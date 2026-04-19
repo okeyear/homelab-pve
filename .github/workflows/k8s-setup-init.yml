@@ -311,8 +311,8 @@ jobs:
           # helm pull jetstack/cert-manager
           # version=$(helm search repo jetstack/cert-manager --versions | awk 'NR==2 {print $2}')
           # mv cert-manager-${version}.tgz cert-manager.tgz
-          images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}' | sed 's@"@@g')
-          # images=$(awk '/image:/ {print $2}' cert-manager.yaml | sed 's@"@@g')
+          # images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}' | sed 's@"@@g')
+          images=$(awk '/image:/ {print $2}' cert-manager.yaml | sed 's@"@@g')
           for image in $images; do
             echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
             skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
