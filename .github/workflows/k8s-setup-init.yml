@@ -355,7 +355,7 @@ jobs:
           apiVersion: cert-manager.io/v1
           kind: ClusterIssuer
           metadata:
-            name: selfsigned-bootstrap
+            name: selfsigned-cluster-bootstrap
           spec:
             selfSigned: {}
 
@@ -381,14 +381,14 @@ jobs:
                 - "${{ github.event.inputs.K8S_CLUSTER_NAME }} Kubernetes"        
             dnsNames:
               - ca.example.com                      
-            secretName: selfsigned-root-ca-secret
+            secretName: selfsigned-root-ca-secret # 生成的根 CA 证书会存储在这个 Secret 中
             duration: 876000h    # 100年
-            renewBefore: 720h   # 提前30天续期
+            renewBefore: 7200h   # 提前300天续期
             privateKey:
               algorithm: ECDSA
               size: 256
             issuerRef:
-              name: selfsigned-bootstrap
+              name: selfsigned-cluster-bootstrap # 引用上面创建的引导 ClusterIssuer
               kind: ClusterIssuer
               group: cert-manager.io
 
