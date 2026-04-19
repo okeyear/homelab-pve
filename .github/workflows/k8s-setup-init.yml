@@ -319,7 +319,7 @@ jobs:
           export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           cd /root
           kubectl create ns cert-manager
-          helm upgrade --install \
+          helm --timeout 5m0s  upgrade --install \
             cert-manager cert-manager.tgz \
             --namespace cert-manager \
             --create-namespace \
