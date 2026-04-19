@@ -41,10 +41,18 @@ on:
         type: boolean
 
       traefik_enable:
-        description: 'Enable Traefik Ingress Controller'
+        description: 'Enable Traefik-Ingress-Controller'
         required: true
         default: false
         type: boolean
+
+      certmanager_enable:
+        description: 'Enable Cert-Manager'
+        required: true   
+        default: false
+        type: boolean 
+
+
 
       # k8s_version:
       #   description: 'supported stable k8s version https://kubernetes.io/releases/'
