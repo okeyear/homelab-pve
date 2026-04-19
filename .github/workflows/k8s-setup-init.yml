@@ -141,6 +141,7 @@ jobs:
 
       # 4️⃣ metrics-server
       - name: metrics-server
+        if: ${{ github.event.inputs.metricsserver_enable == 'true' }}
         run: |
           # 1. 在runner上下载 metrics-server 的 components.yaml，并且修改启动参数，添加 --kubelet-insecure-tls
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
