@@ -292,22 +292,31 @@ jobs:
       - name: cert-manager
         if: ${{ github.event.inputs.certmanager_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         run: |
+          function get_github_latest_release() {
+              curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
+              grep '"tag_name":' |                                            # Get tag line
+              sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
+          }
+
+          version=$(get_github_latest_release "cert-manager/cert-manager")
+          wget -c https://github.com/cert-manager/cert-manager/releases/download/${version}/cert-manager.yaml
           # 1. 在runner上下载 cert-manager 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
           trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
           echo "临时目录路径: $temp_dir"
           cd $temp_dir
-          helm repo add jetstack https://charts.jetstack.io
-          helm repo update
-          helm search repo jetstack/cert-manager --versions | head # v1.20.2
-          helm pull jetstack/cert-manager
-
-          version=$(helm search repo jetstack/cert-manager --versions | awk 'NR==2 {print $2}')
-          mv cert-manager-${version}.tgz cert-manager.tgz
+          # helm repo add jetstack https://charts.jetstack.io
+          # helm repo update
+          # helm search repo jetstack/cert-manager --versions | head # v1.20.2
+          # helm pull jetstack/cert-manager
+          # version=$(helm search repo jetstack/cert-manager --versions | awk 'NR==2 {print $2}')
+          # mv cert-manager-${version}.tgz cert-manager.tgz
           images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}' | sed 's@"@@g')
+          # images=$(awk '/image:/ {print $2}' cert-manager.yaml | sed 's@"@@g')
           for image in $images; do
             echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
             skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" cert-manager.yaml
           done
 
           # 2. rsync到pve上
@@ -318,15 +327,83 @@ jobs:
           source ~/.bashrc
           export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           cd /root
-          kubectl create ns cert-manager
-          helm --timeout 5m0s  upgrade --install \
-            cert-manager cert-manager.tgz \
-            --namespace cert-manager \
-            --create-namespace \
-            --set installCRDs=true \
-            --set prometheus.enabled=false \
-            --set webhook.timeoutSeconds=4 \
-            --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
+          # kubectl create ns cert-manager
+          # helm --timeout 5m0s  upgrade --install \
+          #   cert-manager cert-manager.tgz \
+          #   --namespace cert-manager \
+          #   --create-namespace \
+          #   --set installCRDs=true `# crds.enabled=true` \
+          #   --set prometheus.enabled=false \
+          #   --set webhook.timeoutSeconds=4 \
+          #   --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
+
+          # 直接用 kubectl apply 安装 cert-manager，避免 helm 的安装过程过于复杂和冗长，同时也能更清晰地展示安装过程中的每一步
+          kubectl apply -f cert-manager.yaml
+          kubectl wait --for=condition=Available deployment -n cert-manager --all --timeout=120s
+
+          # 1. SelfSigned ClusterIssuer（引导用）
+          #       ↓ 签发
+          # 2. Root CA Certificate（isCA: true）
+          #       ↓ 存储为 Secret
+          # 3. CA ClusterIssuer（实际使用）
+          #       ↓ 签发
+          # 4. 业务证书 / Ingress TLS / Gateway TLS
+
+          tee cert-manager-config.yaml <<'ENOF'
+          ---
+          # 参考：https://cert-manager.io/docs/configuration/selfsigned/
+          #  ① SelfSigned 引导 Issuer
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: selfsigned-bootstrap
+          spec:
+            selfSigned: {}
+          ---
+          #  ② 根 CA 证书（由引导 Issuer 签发）
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: selfsigned-root-ca-certificate
+            # 如果要根据此CA创建ClusterIssuer（集群范围）必须在cert-manager命名空间
+            namespace: cert-manager
+          spec:
+            isCA: true
+            commonName: "ca.example.com"
+            secretName: selfsigned-root-ca-certificate-tls
+            # 100年
+            duration: 876000h
+            # # 提前30天续期
+            renewBefore: 720h
+            # # 证书信息
+            # subject:
+            #   countries:
+            #   - China
+            #   localities:
+            #   - BeiJing
+            #   organizations:
+            #   - example
+            #   organizationalUnits:
+            #   - devops
+            privateKey:
+              algorithm: ECDSA
+              size: 256
+            issuerRef:
+              name: selfsigned-bootstrap
+              kind: ClusterIssuer
+              group: cert-manager.io
+          ---
+          # ③ CA ClusterIssuer（用根 CA 证书签发业务证书）  
+          # 基于CA创建ClusterIssuer
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: selfsigned-ca-issuer
+          spec:
+            ca:
+              secretName: selfsigned-root-ca-certificate-tls          
+          ENOF
+          kubectl apply -f cert-manager-config.yaml
           EOF
 
       # # 8️⃣ 准备离线包并同步镜像
