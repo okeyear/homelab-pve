@@ -298,8 +298,7 @@ jobs:
               sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
           }
 
-          version=$(get_github_latest_release "cert-manager/cert-manager")
-          wget -c https://github.com/cert-manager/cert-manager/releases/download/${version}/cert-manager.yaml
+          
           # 1. 在runner上下载 cert-manager 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
           trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
@@ -312,6 +311,8 @@ jobs:
           # version=$(helm search repo jetstack/cert-manager --versions | awk 'NR==2 {print $2}')
           # mv cert-manager-${version}.tgz cert-manager.tgz
           # images=$(helm template cert-manager.tgz | awk '/image:/ {print $2}' | sed 's@"@@g')
+          version=$(get_github_latest_release "cert-manager/cert-manager")
+          wget -c https://github.com/cert-manager/cert-manager/releases/download/${version}/cert-manager.yaml
           images=$(awk '/image:/ {print $2}' cert-manager.yaml | sed 's@"@@g')
           for image in $images; do
             echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
