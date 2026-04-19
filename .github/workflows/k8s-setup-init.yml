@@ -369,12 +369,18 @@ jobs:
             namespace: cert-manager
           spec:
             isCA: true
-            commonName: "${{ github.event.inputs.K8S_CLUSTER_NAME }} Kubernetes Root CA"
+            commonName: "ca.example.com"
             subject:
-              organizations:
-                - "My Org"
               countries:
                 - "CN"
+              localities:
+                - BeiJing
+              organizations:
+                - "Example Inc."
+              organizationalUnits:
+                - "${{ github.event.inputs.K8S_CLUSTER_NAME }} Kubernetes"        
+            dnsNames:
+              - ca.example.com                      
             secretName: selfsigned-root-ca-secret
             duration: 876000h    # 100年
             renewBefore: 720h   # 提前30天续期
