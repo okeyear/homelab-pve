@@ -297,12 +297,14 @@ jobs:
             echo "存在正在运行的 rustfs 容器"
           else
             echo "没有找到正在运行的 rustfs 容器"
+            tailscale set --accept-dns=true
             docker run -d \
               --restart=always \
               --name rustfs \
               -p 9000:9000 \
               -v /data/rustfs:/data \
               ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/docker.io/rustfs/rustfs:latest
+              tailscale set --accept-dns=false
           fi
           EOF
       - name: Metrics-Server
