@@ -480,7 +480,9 @@ jobs:
           helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner.tgz -n kube-system \
             --set image.repository=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/sig-storage/nfs-subdir-external-provisioner \
             --set nfs.server=10.10.10.1 \
-            --set nfs.path=/nfs          
+            --set nfs.path=/nfs      
+
+          helm status -n kube-system nfs-subdir-external-provisioner   
           EOF
           
           # install nfs-subdir-external-provisioner
