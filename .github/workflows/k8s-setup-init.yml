@@ -96,7 +96,7 @@ jobs:
     # runs-on: ubuntu-latest
     runs-on: ${{ github.event.inputs.runner }}
     env:
-      BASH_ENV: ${{ runner.temp }}/bash_env.sh
+      BASH_ENV: /tmp/k8s-setup-init-bash-env.sh
       GITHUB_TOKEN: ${{ github.token }}
     permissions:
       id-token: write   # 让 GitHub 颁发 OIDC
