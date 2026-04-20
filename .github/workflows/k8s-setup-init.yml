@@ -55,11 +55,12 @@ on:
       csi_nfs:
         description: 'nfs二选一: nfs-subdir-external-provisioner(默认) 或 csi-driver-nfs'
         required: true
-        default: nfs-subdir-external-provisioner
+        default: none
         type: choice
         options:
           - nfs-subdir-external-provisioner
           - csi-driver-nfs(pending todo)
+          - none
 
 
       # k8s_version:
@@ -453,7 +454,7 @@ jobs:
 
       # 8️⃣ nfs-subdir-external-provisioner
       - name: nfs-subdir-external-provisioner
-        if: github.event.inputs.csi_nfs == 'nfs-subdir-external-provisioner'
+        if: ${{ github.event.inputs.csi_nfs == 'nfs-subdir-external-provisioner' || github.event.inputs.all_enable == 'true' }}
         run: |
           # 1. 在runner上下载 nfs-subdir-external-provisioner 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
