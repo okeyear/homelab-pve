@@ -479,7 +479,7 @@ jobs:
           # 0. pve上安装nfs
           echo "在 PVE 上安装 NFS 服务端和客户端..."
           sudo apt install -yq nfs-kernel-server nfs-common
-          mkdir /nfs
+          [ -d /nfs ] || mkdir /nfs
           sudo chown nobody:nogroup /nfs
           sudo chmod -R 777 /nfs
           # sudo vim /etc/exports
