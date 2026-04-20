@@ -298,14 +298,16 @@ jobs:
           else
             echo "没有找到正在运行的 rustfs 容器"
             tailscale set --accept-dns=true
+            # sudo mkdir -p /data/rustfs
+            # sudo chown -R 10001:10001 /data/rustfs  # 容器使用 UID 10001
+            # sudo chmod 755 /data/rustfs
+
             docker run -d \
               --restart=always \
               --name rustfs \
               -p 9000:9000 \
-              --cap-add=SYS_ADMIN \
-              --cap-add=DAC_OVERRIDE \
-              --security-opt apparmor:unconfined \
-              -p 9000:9000 \
+              --security-opt seccomp=unconfined \
+              --security-opt apparmor=unconfined \
               -v /data/rustfs:/data \
               -e RUST_BACKTRACE=1 \
               -v /data/rustfs:/data \
