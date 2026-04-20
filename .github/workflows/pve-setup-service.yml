@@ -29,13 +29,13 @@ on:
         type: boolean
 
       zot_enable:
-        description: 'Enable zot container registry'
+        description: 'Enable Zot(Container Registry)'
         required: true
         default: false
         type: boolean
 
       rustfs_enable:
-        description: 'Enable rustfs'
+        description: 'Enable RustFS(S3 compatible object storage server)'
         required: true
         default: false
         type: boolean
