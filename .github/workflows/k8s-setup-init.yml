@@ -475,6 +475,11 @@ jobs:
             ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@$node "sudo apt-get install -y nfs-common || sudo yum install -y nfs-utils"
             echo "节点 $node 上的 NFS 客户端安装完成。"
           done
+          # 3. 安装 nfs-subdir-external-provisioner Helm Chart，并且设置镜像地址和 NFS 服务器信息
+          helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner.tgz -n kube-system \
+            --set image.repository=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/sig-storage/nfs-subdir-external-provisioner \
+            --set nfs.server=10.10.10.1 \
+            --set nfs.path=/nfs          
           EOF
           
           # install nfs-subdir-external-provisioner
@@ -498,10 +503,6 @@ jobs:
           export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           cd /root
           bash install-nfs-client-all-nodes.sh
-          helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner.tgz -n kube-system \
-            --set image.repository=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/sig-storage/nfs-subdir-external-provisioner \
-            --set nfs.server=10.10.10.1 \
-            --set nfs.path=/nfs
           EOF
       
 
