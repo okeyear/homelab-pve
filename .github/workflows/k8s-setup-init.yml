@@ -53,7 +53,7 @@ on:
         type: boolean 
 
       csi_nfs:
-        description: 'nfs二选一: nfs-subdir-external-provisioner(默认) 或 csi-driver-nfs'
+        description: 'nfs二选一'
         required: true
         default: none
         type: choice
@@ -61,6 +61,7 @@ on:
           - nfs-subdir-external-provisioner
           - csi-driver-nfs(pending todo)
           - none
+          - s3(deprecated, not recommended)
 
       csi:
         description: '选一: pending'
