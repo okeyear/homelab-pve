@@ -19,7 +19,7 @@ on:
       image_name:
         description: 'docker image name'
         required: true
-        default: 'busybox:latest'
+        default: 'busybox'
         type: string
 
       container_registry:
