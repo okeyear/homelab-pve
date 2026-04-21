@@ -315,31 +315,4 @@ jobs:
               tailscale set --accept-dns=false
           fi
           EOF
-      - name: Metrics-Server
-        if: ${{ github.event.inputs.metricsserver_enable == 'true' || github.event.inputs.all_enable == 'true' }}
-        run: |
-          # 1. 在runner上下载 metrics-server 的 components.yaml，并且修改启动参数，添加 --kubelet-insecure-tls
-          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
-          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
-          echo "临时目录路径: $temp_dir"
-          cd $temp_dir
-          wget -c https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-          sed -i '/metric-resolution=/a\        - --kubelet-insecure-tls # 加上该启动参数' components.yaml
-          image=$(awk '/image:/ {print $2}' components.yaml)
-          echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
-          skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
-          sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" components.yaml
-
-
-          # 2. rsync到pve上
-          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace components.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-
-          # 3. 到pve上执行
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
-          source ~/.bashrc
-          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
-          kubectl get nodes -o wide
-          cd /root
-          kubectl apply -f components.yaml
-          kubectl get pod -n kube-system | grep metrics-server
-          EOF
+      
