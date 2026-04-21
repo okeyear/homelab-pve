@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "[ 21 ] k8s cluster init settings"
+name: "[ 19 ] k8s cluster init settings"
 
 # Controls when the workflow will run
 on:
