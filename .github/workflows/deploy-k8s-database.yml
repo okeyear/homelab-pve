@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "[ 31 ] Deploy Monitoring k8s Cluster pending"
+name: "[ 32 ] Deploy Database k8s Cluster pending"
 
 # Controls when the workflow will run
 on:
@@ -16,42 +16,49 @@ on:
           - self-hosted
           - ubuntu-latest
 
-      all_enable:
-        description: 'Enable ALL(Below Components)'
+      postgres_version:
+        description: 'PostgreSQL version'
         required: true
-        default: false
-        type: boolean
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - '15'
+          - '16'
+          - '17'
+          - '18'
+          - 'latest'
 
-      prometheus_enable:
-        description: 'Enable Prometheus monitoring'
+      mysql_version:
+        description: 'MySQL version'
         required: true
-        default: false
-        type: boolean
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - '8.0'
+          - 'latest'
 
-      grafana_enable:
-        description: 'Enable Grafana dashboard'
+      redis_version:
+        description: 'Redis version'
         required: true
-        default: false
-        type: boolean
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - '7.0'
+          - 'latest'
 
-      loki_enable:
-        description: 'Enable Loki log aggregation'
+      kafka_version:
+        description: 'Kafka version'
         required: true
-        default: false
-        type: boolean
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - '3.0'
+          - 'latest'
 
-      tempo_enable:
-        description: 'Enable Tempo tracing'
-        required: true
-        default: false
-        type: boolean
-
-      zabbix_enable:
-        description: 'Enable Zabbix monitoring'
-        required: true
-        default: false
-        type: boolean
-        
       K8S_CLUSTER_NAME:
         description: 'Kubernetes cluster name'
         required: true
@@ -148,27 +155,8 @@ jobs:
           version: latest # https://pkgs.tailscale.com/stable/#static
           use-cache: 'true'
 
-      # 4️⃣ deploy prometheus stack
-      - name: Deploy Prometheus Stack
-        if: ${{ github.event.inputs.prometheus_enable == 'true' || github.event.inputs.all_enable == 'true' }}
+      # 4️⃣ deploy postgresql cluster via kubespray
+      - name: Deploy PostgreSQL on k8s
+        if: ${{ github.event.inputs.postgres_version != 'none' }}
         run: |
-          # 这里直接用 kubectl 连接到 k8s 集群部署监控组件，后续可以改为在 runner 上安装 ansible 和 kubespray 来部署 k8s 集群和监控组件
-          # 连接 k8s 集群的前提是 runner 能访问到 k8s API Server，这里假设已经通过 tailnet 实现了网络连接
-          # 1. 安装 kube-prometheus-stack，包含 Prometheus、Grafana、Alertmanager 等组件
-          # 2. 配置 Grafana 的 admin 密码为 "admin"，并且设置默认的 datasource 和 dashboard
-          # 3. 配置 Prometheus 的 Alertmanager，设置一个简单的告警规则，当 node CPU 使用率超过 80% 时触发告警
-          # 4. 暴露 Grafana 的 3000 端口，Prometheus 的 9090 端口，以及 Alertmanager 的 9093 端口，方便访问和测试 
-          # 5. 后续可以改为部署 Loki 和 Tempo 来收集日志和追踪数据，完善监控体系
-          # 6. 注意安全性，生产环境中不建议直接暴露监控组件的端口，应该通过 Ingress 或者 VPN 来访问，并且设置强密码和访问控制 
-          # 安装 kube-prometheus-stack
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo update
-          helm install prometheus-stack prometheus-community/kube-prometheus-stack \
-            --namespace monitoring --create-namespace \
-            --set grafana.adminPassword=admin \
-            --set grafana.service.type=NodePort \
-            --set grafana.service.nodePort=3000 \
-            --set prometheus.service.type=NodePort \
-            --set prometheus.service.nodePort=9090 \
-            --set alertmanager.service.type=NodePort \
-            --set alertmanager.service.nodePort=9093
+          echo pending
