@@ -133,23 +133,23 @@ jobs:
           fi
           # 如果 image name 中没有 registry，则默认加上 docker.io/library/
           case "$IMAGE_NAME" in
-              docker.io*|quay.io*|registry.k8s.io*|gcr.io*|ghcr.io*|mcr.microsoft.com*)
-                  echo 
+              docker.io*|quay.io*|registry.k8s.io*|gcr.io*|ghcr.io*|mcr.microsoft.com*|*.*)
+                  image_name="${IMAGE_NAME}" 
                   ;;
               *)
-                  if [[ $image_name =~ / ]]; then
-                      image_name="docker.io/${image_name}"
+                  if [[ $IMAGE_NAME =~ / ]]; then
+                      image_name="docker.io/${IMAGE_NAME}"
                   else
-                      image_name="docker.io/library/${image_name}"
+                      image_name="docker.io/library/${IMAGE_NAME}"
                   fi
                   ;;
           esac
 
-          # 大写的IMAGE_NAME， 同步到pve时候用，如果不带docker.io，同步后也不带
-          # 小写的image_name， 是为了生成dst_name, 因为有些registry（aliyun tencent）不允许image name中带有/，所以把/替换成_
+          # 大写的IMAGE_NAME， 生成dst_name用
+          # 小写的image_name， 是为了生成完整带域名的src_image_name
 
-          dest_name=$(echo "$image_name" | sed 's|/|_|g')
-          echo "normalized image name: $image_name"
+          dest_name=$(echo "$IMAGE_NAME" | sed 's|/|_|g')
+          echo "normalized image name: ${{ github.event.inputs.image_name }} --> $image_name --> $dest_name"
 
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
           echo "SRC_IMAGE_NAME=$image_name" >> $GITHUB_ENV
@@ -159,7 +159,7 @@ jobs:
       - name: sync image to pve local registry
         if: ${{ github.event.inputs.container_registry == 'pve' }}
         run: |
-          echo "### syncing image ${{ env.SRC_IMAGE_NAME }} to ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/${{ env.SRC_IMAGE_NAME }}"
+          echo "### syncing image ${{ env.SRC_IMAGE_NAME }} to ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/${{ env.IMAGE_NAME }}"
           skopeo copy docker://${{ env.SRC_IMAGE_NAME }} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/${{ env.IMAGE_NAME }}
 
       - name: sync image to aliyun container registry
