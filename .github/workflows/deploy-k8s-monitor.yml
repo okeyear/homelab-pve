@@ -51,13 +51,18 @@ on:
         required: true
         default: false
         type: boolean
-        
+
       K8S_CLUSTER_NAME:
         description: 'Kubernetes cluster name'
         required: true
         type: string
         default: 'mycluster'
 
+      K8S_NAMESPACE:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+        default: 'monitoring'
 
 env:
   TAILSCALE_HOST: pve
@@ -69,6 +74,7 @@ env:
   # NODE02_IP: 10.10.10.102
   # VMs: ${{ github.event.inputs.VMs }}
   K8S_CLUSTER_NAME: ${{ github.event.inputs.K8S_CLUSTER_NAME }}
+  K8S_NAMESPACE: ${{ github.event.inputs.K8S_NAMESPACE }}
 
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel

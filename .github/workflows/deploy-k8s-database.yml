@@ -65,6 +65,11 @@ on:
         type: string
         default: 'mycluster'
 
+      K8S_NAMESPACE:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+        default: 'database'
 
 env:
   TAILSCALE_HOST: pve
