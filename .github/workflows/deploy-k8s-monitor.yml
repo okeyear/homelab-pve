@@ -28,6 +28,23 @@ on:
         default: false
         type: boolean
 
+      grafana_enable:
+        description: 'Enable Grafana dashboard'
+        required: true
+        default: false
+        type: boolean
+
+      loki_enable:
+        description: 'Enable Loki log aggregation'
+        required: true
+        default: false
+        type: boolean
+
+      tempo_enable:
+        description: 'Enable Tempo tracing'
+        required: true
+        default: false
+        type: boolean
 
       K8S_CLUSTER_NAME:
         description: 'Kubernetes cluster name'
