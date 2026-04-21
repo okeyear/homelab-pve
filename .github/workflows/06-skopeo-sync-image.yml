@@ -149,7 +149,7 @@ jobs:
           # 小写的image_name， 是为了生成完整带域名的src_image_name
 
           dest_name=$(echo "$IMAGE_NAME" | sed 's|/|_|g')
-          echo "normalized image name: ${{ github.event.inputs.image_name }} --> $image_name --> $dest_name"
+          echo "normalized image name: input:${{ github.event.inputs.image_name }} --> src:$image_name --> dest:\$registry:$dest_name"
 
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
           echo "SRC_IMAGE_NAME=$image_name" >> $GITHUB_ENV
