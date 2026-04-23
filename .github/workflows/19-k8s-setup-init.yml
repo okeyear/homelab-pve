@@ -72,6 +72,7 @@ on:
           - longhorn
           - rook-ceph
           - openebs
+          - local-path
           - none
 
       # k8s_version:
@@ -538,6 +539,25 @@ jobs:
         run: |
           echo pending
 
+      - name: local-path provisioner
+        if: github.event.inputs.csi == 'local-path'
+        run: |
+          version=$(get_github_latest_release "rancher/local-path-provisioner")
+          wget -c https://raw.githubusercontent.com/rancher/local-path-provisioner/${version}/deploy/local-path-storage.yaml
+          images=$(awk '/image:/ {print $2}' local-path-storage.yaml | sed 's@"@@g')
+          for image in $images; do
+            echo "### skopeo copy docker://docker.io/${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://docker.io/${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" local-path-storage.yaml
+          done
+
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace local-path-storage.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          cd /root
+          kubectl apply -f local-path-storage.yaml
+          EOF
       # - name: prepare kubespray command on pve
       #   run: |
       #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
