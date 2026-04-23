@@ -131,16 +131,21 @@ https://github.com/TimeBye/kubeadm-ha
 ### setup k8s cluster via k0s
 ### setup k8s cluster via k3s
 ### setup k8s cluster via kubeadm
-### setup k8s cluster via ansible
+### setup k8s cluster via ansible（kubeaz kubespray）
 
 ### CICD Pipeline
 - Gitea 
 - Drone
+- app2docker
+- github action
+- gitlab cicd
 
 ### Docker registry
+- zot Registry
 - Docker Registry (registry:2)	
 - Harbor
 - 阿里云 ACR 个人版
+- 腾讯云香港个人版
 
 ### Artifact制品库
 - 纯 Maven/NPM: JFrog Artifactory OSS
@@ -156,10 +161,8 @@ https://github.com/TimeBye/kubeadm-ha
 | **云备份**     | rclone + davfs | 任意     | `rclone mount` + `restic backup`                                           | 异地容灾，加密去重                                |
 
 
-### OSS MinIO RustFS
-- Docker compose 启动MinIO
-- k3s 部署MinIO Operator
-- RustFS 替代 MinIO
+### OSS RustFS
+- Docker 启动 RustFS
 
 ### Monitor
 Prometheus + Grafana + Loki + Alertmanager	
