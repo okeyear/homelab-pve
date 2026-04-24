@@ -46,6 +46,12 @@ on:
         default: false
         type: boolean
 
+      envoy_enable:
+        description: 'Enable Envoy GatewayApi'
+        required: true
+        default: false
+        type: boolean
+        
       certmanager_enable:
         description: 'Enable Cert-Manager'
         required: true   
@@ -558,6 +564,48 @@ jobs:
           cd /root
           kubectl apply -f local-path-storage.yaml
           EOF
+
+      - name: envoy gateway
+        if: ${{ github.event.inputs.envoy_enable == 'true' || github.event.inputs.all_enable == 'true' }}
+        run: |
+          ChartVersion='v0.0.0-latest'
+          helm pull oci://docker.io/envoyproxy/gateway-helm --version ${ChartVersion}
+          # gateway-helm-${ChartVersion}.tgz
+          images=$(helm template eg gateway-helm-${ChartVersion}.tgz | awk '/image:/{print $NF}' | sort -u)
+          for image in $images; do
+            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+          done
+
+          wget https://github.com/envoyproxy/gateway/releases/download/latest/quickstart.yaml
+          images=$(awk '/image:/{print $NF}' quickstart.yaml | sort -u)
+          for image in $images; do
+            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" quickstart.yaml
+          done
+
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./gateway-helm-${ChartVersion}.tgz root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./quickstart.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
+          source ~/.bashrc
+          ChartVersion='v0.0.0-latest'
+          export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
+          cd /root
+          helm install eg gateway-helm-${ChartVersion}.tgz -n kube-system --create-namespace
+          helm install eg oci://docker.io/envoyproxy/gateway-helm \
+            --version ${ChartVersion} \
+            -n envoy-gateway-system \
+            --create-namespace \
+            --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
+
+          kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
+
+          kubectl apply -n default -f quickstart.yaml
+
+          EOF
+
       # - name: prepare kubespray command on pve
       #   run: |
       #     cd $GITHUB_WORKSPACE/kubespray # GITHUB_WORKSPACE=/home/runner/work/homelab-pve/homelab-pve
