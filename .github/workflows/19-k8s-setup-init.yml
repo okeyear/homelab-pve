@@ -109,7 +109,7 @@ env:
 jobs:
   # This workflow contains a single job called "build"
   setup:
-    name: 🚀 Deploy k8s via kubespray
+    name: 🚀 Deploy k8s components
     # The type of runner that the job will run on
     # runs-on: [self-hosted]
     # runs-on: ubuntu-latest
@@ -584,7 +584,7 @@ jobs:
             skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
             sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" quickstart.yaml
           done
-
+          ls -lh
           rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./gateway-helm-${ChartVersion}.tgz root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./quickstart.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           # rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
