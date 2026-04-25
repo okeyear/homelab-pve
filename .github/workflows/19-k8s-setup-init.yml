@@ -568,10 +568,6 @@ jobs:
       - name: envoy gateway
         if: ${{ github.event.inputs.envoy_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         run: |
-          temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
-          trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
-          echo "临时目录路径: $temp_dir"
-          cd $temp_dir
           ChartVersion='v0.0.0-latest'
           helm pull oci://docker.io/envoyproxy/gateway-helm --version ${ChartVersion}
           # gateway-helm-${ChartVersion}.tgz
