@@ -59,7 +59,7 @@ on:
         type: boolean 
 
       csi_nfs:
-        description: 'nfs二选一'
+        description: 'csi nfs选一'
         required: true
         default: none
         type: choice
@@ -70,7 +70,7 @@ on:
           - s3(deprecated, not recommended)
 
       csi:
-        description: '选一: pending'
+        description: 'csi 选一: pending'
         required: true
         default: none
         type: choice
@@ -358,6 +358,7 @@ jobs:
       - name: cert-manager
         if: ${{ github.event.inputs.certmanager_enable == 'true' || github.event.inputs.all_enable == 'true' }}
         shell: bash
+        # TODO: helm安装后，启动有个检查的job， quay.io的镜像，需要处理
         run: |
           # 1. 在runner上下载 cert-manager 的 manifests.yaml，并且修改镜像地址
           temp_dir=$(mktemp -d) || { echo "创建临时目录失败"; exit 1; }
@@ -583,13 +584,15 @@ jobs:
             skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
           done
 
-          wget https://github.com/envoyproxy/gateway/releases/download/latest/quickstart.yaml
-          images=$(awk '/image:/{print $NF}' quickstart.yaml | sort -u)
-          for image in $images; do
-            echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
-            skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
-            sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" quickstart.yaml
-          done
+          # wget https://github.com/envoyproxy/gateway/releases/download/latest/quickstart.yaml
+          # images=$(awk '/image:/{print $NF}' quickstart.yaml | sort -u)
+          # for image in $images; do
+          #   echo "### skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}"
+          #   skopeo copy docker://${image} docker://${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}
+          #   sed -i "s#${image}#${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s/${image#*/}#g" quickstart.yaml
+          # done
+
+
           # ls -lh
           # rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./gateway-helm-${ChartVersion}.tgz root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           # rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' -avz --partial --progress --inplace ./quickstart.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
@@ -606,8 +609,41 @@ jobs:
             --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
 
           kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
+          # TODO: helm安装后，启动有个检查的job， 用的还是docker.io的镜像，需要处理
+          # kubectl apply -n default -f quickstart.yaml
 
-          kubectl apply -n default -f quickstart.yaml
+          cat <<EODF | kubectl apply -f -
+          apiVersion: gateway.envoyproxy.io/v1alpha1
+          kind: EnvoyProxy
+          metadata:
+            name: eg-envoy-proxy      # 资源名称
+            namespace: envoy-gateway-system  # 建议管理性命名空间
+          spec:
+            provider:
+              type: Kubernetes
+              kubernetes:
+                envoyService:
+                  type: LoadBalancer
+                  # ① 配置指定的静态IP（可选）
+                  # loadBalancerIP: 10.10.10.125   # 请替换为你的静态IP
+                  # ② 配置 MetalLB 注解（推荐用于指定IP）
+                  annotations:
+                    metallb.universe.tf/loadBalancerIPs: "10.10.10.125"   # 替换为IP
+                  # ③ 其他常用 Service 配置（可选）
+                  # externalTrafficPolicy: Local   # 保持客户端源IP
+          ---
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: eg
+          spec:
+            controllerName: gateway.envoyproxy.io/gatewayclass-controller
+            parametersRef:
+              group: gateway.envoyproxy.io
+              kind: EnvoyProxy
+              name: eg-envoy-proxy
+              namespace: envoy-gateway-system
+          EODF
 
           EOF
 
