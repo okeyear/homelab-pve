@@ -586,7 +586,7 @@ jobs:
           done
           ls -lh
           rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./gateway-helm-${ChartVersion}.tgz root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./quickstart.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -av ./quickstart.yaml root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           # rsync -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostseFile=/dev/null' -avz --partial --progress --inplace ./* root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
 
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} << 'EOF'
