@@ -572,7 +572,7 @@ jobs:
           trap 'rm -rf "$temp_dir"; echo "清理临时目录: $temp_dir"' EXIT
           echo "临时目录路径: $temp_dir"
           cd $temp_dir
-          
+
           ChartVersion='v0.0.0-latest'
           helm pull oci://docker.io/envoyproxy/gateway-helm --version ${ChartVersion}
           # gateway-helm-${ChartVersion}.tgz
@@ -599,9 +599,7 @@ jobs:
           ChartVersion='v0.0.0-latest'
           export KUBECONFIG=~/.kube/${{ github.event.inputs.K8S_CLUSTER_NAME }}.kubeconfig
           cd /root
-          helm install eg gateway-helm-${ChartVersion}.tgz -n kube-system --create-namespace
-          helm install eg oci://docker.io/envoyproxy/gateway-helm \
-            --version ${ChartVersion} \
+          helm install eg gateway-helm-${ChartVersion}.tgz \
             -n envoy-gateway-system \
             --create-namespace \
             --set global.imageRegistry=${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:5000/k8s
