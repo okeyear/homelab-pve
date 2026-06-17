@@ -316,7 +316,10 @@ jobs:
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
           cd $SCRIPT_DIR
           CLUSTER_NAME="${K8S_CLUSTER_NAME:-mycluster}"
-
+          sudo apt update && sudo apt install -yq pipx
+          pipx ensurepath
+          pipx runpip ansible-core install -r /root/kubespray/requirements.txt
+          ansible-galaxy collection install ansible.utils kubernetes.core ansible.posix community.general
           ansible-playbook -i inventory/${CLUSTER_NAME}/inventory.ini add-hosts-entry.yml -b -v
           rsync -av /root/kubespray/contrib/offline/temp/files/* /usr/share/nginx/html/ 
           
