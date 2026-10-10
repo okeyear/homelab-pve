@@ -193,11 +193,33 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-utils libguestfs-tools
-          if [ -w /dev/kvm ]; then
-            echo "libguestfs: /dev/kvm writable, using hardware acceleration"
-          else
-            echo "::warning::no /dev/kvm, libguestfs falls back to TCG (slow)"
+
+          # Ubuntu ships /boot/vmlinuz-* mode 0600, but supermin has to read the
+          # kernel as the unprivileged runner user. Without this it fails with a
+          # bare "supermin exited with error status 1" and no real reason.
+          # https://bugs.launchpad.net/ubuntu/+bug/759725
+          sudo chmod 0644 /boot/vmlinuz* 2>/dev/null || true
+          kver="$(uname -r)"
+          if [ -f "/boot/vmlinuz-${kver}" ]; then
+            sudo dpkg-statoverride --force-statoverride-add --update \
+              --add root root 0644 "/boot/vmlinuz-${kver}"
           fi
+
+          # The libvirt backend refuses to open files owned by root; direct avoids
+          # that class of failure entirely.
+          echo 'LIBGUESTFS_BACKEND=direct' >> "$GITHUB_ENV"
+          echo 'LIBGUESTFS_MEMSIZE=2048'    >> "$GITHUB_ENV"
+
+          echo "--- acceleration"
+          ls -l /dev/kvm 2>&1 || echo "(absent: libguestfs falls back to TCG, slower but works)"
+
+      - name: Preflight libguestfs appliance
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          set -euo pipefail
+          # Boot the appliance once up front. If this passes, the only remaining
+          # variable in virt-customize is the guest itself.
+          libguestfs-test-tool
 
       - name: Download cloud image
         if: contains(github.event.inputs.OS, 'ubuntu')
