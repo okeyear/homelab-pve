@@ -306,9 +306,14 @@ jobs:
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
-          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace setup_debian.sh vagrant@${CIDR}.250:/home/vagrant/
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_debian.sh'
+          # Do NOT rsync into the guest. The Debian genericcloud image ships no
+          # rsync, so the far side of `rsync -e ssh` dies with "command not
+          # found" while the local sender happily reports a protocol error --
+          # the step goes red on an otherwise healthy VM. Stream the script
+          # over ssh into a real file instead: the guest script re-execs itself
+          # under sudo through argv, so it needs a path on disk, not stdin.
+          cat setup_debian.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "vagrant@\$guest_ip" 'cat > /home/vagrant/setup_debian.sh && bash /home/vagrant/setup_debian.sh'
           EOF
           cat setup_debian_tpl.sh
 
@@ -525,9 +530,14 @@ jobs:
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
-          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace setup_ubuntu.sh vagrant@${CIDR}.250:/home/vagrant/
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_ubuntu.sh'
+          # Do NOT rsync into the guest. Not every cloud image ships rsync, and when
+          # one does not, the far side of `rsync -e ssh` dies with "command not
+          # found" while the local sender reports a protocol error instead.
+          # Stream the script over ssh into a real file: the guest script
+          # re-execs itself under sudo through argv, so it needs a path on
+          # disk, not stdin.
+          cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "vagrant@\$guest_ip" 'cat > /home/vagrant/setup_ubuntu.sh && bash /home/vagrant/setup_ubuntu.sh'
           EOF
           cat setup_ubuntu_tpl.sh
 
@@ -722,9 +732,14 @@ jobs:
           # qm guest exec $VM_ID -- bash -c "\$(cat setup_almalinux.sh)"
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           # cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash -s'
-          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace setup_almalinux.sh vagrant@${CIDR}.250:/home/vagrant/
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_almalinux.sh'          
+          # Do NOT rsync into the guest. Not every cloud image ships rsync, and when
+          # one does not, the far side of `rsync -e ssh` dies with "command not
+          # found" while the local sender reports a protocol error instead.
+          # Stream the script over ssh into a real file: the guest script
+          # re-execs itself under sudo through argv, so it needs a path on
+          # disk, not stdin.
+          cat setup_almalinux.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "vagrant@\$guest_ip" 'cat > /home/vagrant/setup_almalinux.sh && bash /home/vagrant/setup_almalinux.sh'          
           EOF
 
           cat setup_almalinux_tpl.sh
