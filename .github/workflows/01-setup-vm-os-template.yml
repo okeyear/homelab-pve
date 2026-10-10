@@ -6,11 +6,11 @@ on:
       runner:
         description: 'Github Action Runner/Agent'
         required: true
-        default: self-hosted
+        default: ubuntu-latest
         type: choice
         options:
-          - self-hosted
           - ubuntu-latest
+          - self-hosted
 
       OS:
         description: 'OS Version'
@@ -169,209 +169,186 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
           root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_debian_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"                
           
-      - name: Setup Ubuntu script
-        # if: github.event.inputs.OS == 'ubuntu2404'
+      - name: Resolve Ubuntu version
+        id: ubuntu
         if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
-          echo setup ubuntu script ...
-          version=$(echo ${{ github.event.inputs.OS }} | sed 's@ubuntu@@')
-          vmid=${version/./}
-          echo "ubuntu_ver=$version"      >> "$GITHUB_ENV"
-          echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
+          set -euo pipefail
+          ver='${{ github.event.inputs.OS }}'
+          ver="${ver#ubuntu}"
+          case "$ver" in
+            22.04) codename=jammy    ;;
+            24.04) codename=noble    ;;
+            26.04) codename=resolute ;;
+            *) echo "::error::unsupported ubuntu $ver"; exit 1 ;;
+          esac
+          vm_id="${ver/./}"
+          echo "ver=${ver}"          >> "$GITHUB_OUTPUT"
+          echo "codename=${codename}" >> "$GITHUB_OUTPUT"
+          echo "vm_id=${vm_id}"      >> "$GITHUB_OUTPUT"
 
-          cat > setup_ubuntu.sh <<'EOF'
+      - name: Install image build tools
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils libguestfs-tools
+          if [ -w /dev/kvm ]; then
+            echo "libguestfs: /dev/kvm writable, using hardware acceleration"
+          else
+            echo "::warning::no /dev/kvm, libguestfs falls back to TCG (slow)"
+          fi
+
+      - name: Download cloud image
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        env:
+          VER: ${{ steps.ubuntu.outputs.ver }}
+        run: |
+          set -euo pipefail
+          img="ubuntu-${VER}-server-cloudimg-amd64.img"
+          url="https://cloud-images.ubuntu.com/releases/${VER}/release/${img}"
+          echo "downloading ${url}"
+          wget -q -c -O "$img" "$url"
+          echo "### image as shipped"
+          qemu-img info "$img"
+          qemu-img resize "$img" 20G
+          echo "### image after resize"
+          qemu-img info "$img"
+          echo "IMG=${img}" >> "$GITHUB_ENV"
+
+      - name: Stage guest customization files
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        env:
+          VER: ${{ steps.ubuntu.outputs.ver }}
+          CODENAME: ${{ steps.ubuntu.outputs.codename }}
+        run: |
+          set -euo pipefail
+          mkdir -p guest
+
+          # Aliyun mirror. Replaces sources.list wholesale so the distro default
+          # never has to be parsed, then the deb822 file is removed separately.
+          cat > guest/sources.list <<EOF
+          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
+          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse
+          EOF
+
+          cat > guest/99-homelab.cfg <<'EOF'
+          # keep static /etc/hosts; keep our sources.list when apt runs
+          apt_preserve_sources_list: true
+          # let the vagrant user reach the host: leave disable_root alone
+          preserve_hostname: false
+          manage_etc_hosts: false
+          datasource_list: [ ConfigDrive, NoCloud ]
+          EOF
+
+          cat > guest/01-permitrootlogin.conf <<'EOF'
+          PermitRootLogin yes
+          PasswordAuthentication yes
+          EOF
+
+          # Repo-backed runtime that has no first-class Ubuntu package:
+          # containerd/runc/nerdctl (Docker repo) and kubeadm/kubelet/kubectl (k8s repo).
+          cat > guest/setup-container-runtime.sh <<'EOF'
+          set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          source /etc/os-release
-          # echo ${VERSION_CODENAME} ${UBUNTU_CODENAME}
-          sudo sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
-          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
-          sudo mv /etc/apt/sources.list{,.bak.init}
-          sudo tee /etc/apt/sources.list <<ENDIF
-          # 默认注释了源码镜像以提高 apt update 速度，如有需要可自行取消注释
-          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME} main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${UBUNTU_CODENAME}-security main restricted universe multiverse
-          ENDIF
-          sleep 2
-          # kvm agent
-          sudo apt update -y
-          sudo apt install -yq vim wget telnet qemu-guest-agent curl ca-certificates gnupg lsb-release apt-transport-https jq git
-          sleep 2
 
-          get_github_latest_release() {
-            curl --silent "https://api.github.com/repos/$1/releases/latest" |
-              grep '"tag_name":' |
-              sed -E 's/.*"([^"]+)".*/\1/'
-          }
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
+            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+            > /etc/apt/sources.list.d/docker.list
 
-          install_containerd_stack() {
-            local containerd_ver runc_ver cni_ver nerdctl_ver etcd_ver
+          k8s_minor=1.34
+          curl -fsSL "https://mirrors.aliyun.com/kubernetes-new/core/stable/v${k8s_minor}/deb/Release.key" \
+            | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://mirrors.aliyun.com/kubernetes-new/core/stable/v${k8s_minor}/deb/ /" \
+            > /etc/apt/sources.list.d/kubernetes.list
 
-            containerd_ver=$(get_github_latest_release containerd/containerd)
-            containerd_ver=${containerd_ver#v}
-            runc_ver=$(get_github_latest_release opencontainers/runc)
-            cni_ver=$(get_github_latest_release containernetworking/plugins)
-            nerdctl_ver=$(get_github_latest_release containerd/nerdctl)
-            nerdctl_ver=${nerdctl_ver#v}
-            etcd_ver=$(get_github_latest_release etcd-io/etcd)
+          apt-get update -qq
+          apt-get install -y -qq containerd.io runc
 
-            cd /tmp
+          containerd config default > /etc/containerd/config.toml
+          sed -i 's@registry.k8s.io@registry.cn-hangzhou.aliyuncs.com/google_containers@' /etc/containerd/config.toml
 
-            [ -s "containerd-${containerd_ver}-linux-amd64.tar.gz" ] || wget -c "https://ghfast.top/https://github.com/containerd/containerd/releases/download/v${containerd_ver}/containerd-${containerd_ver}-linux-amd64.tar.gz"
-            sudo tar -C /usr/local -xf "containerd-${containerd_ver}-linux-amd64.tar.gz"
-
-            sudo mkdir -pv /usr/local/lib/systemd/system
-            [ -s containerd.service ] || wget -c "https://ghfast.top/https://raw.githubusercontent.com/containerd/containerd/main/containerd.service"
-            sudo cp containerd.service /usr/local/lib/systemd/system/containerd.service
-
-            [ -s runc.amd64 ] || wget -c "https://ghfast.top/https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64"
-            sudo install -m 755 runc.amd64 /usr/local/sbin/runc
-
-            sudo mkdir -p /opt/cni/bin
-            [ -s "cni-plugins-linux-amd64-${cni_ver}.tgz" ] || wget -c "https://ghfast.top/https://github.com/containernetworking/plugins/releases/download/${cni_ver}/cni-plugins-linux-amd64-${cni_ver}.tgz"
-            sudo tar -xzf "cni-plugins-linux-amd64-${cni_ver}.tgz" -C /opt/cni/bin
-
-            [ -s "nerdctl-${nerdctl_ver}-linux-amd64.tar.gz" ] || wget -c "https://ghfast.top/https://github.com/containerd/nerdctl/releases/download/v${nerdctl_ver}/nerdctl-${nerdctl_ver}-linux-amd64.tar.gz"
-            sudo tar -C /usr/local/bin -xzf "nerdctl-${nerdctl_ver}-linux-amd64.tar.gz" nerdctl
-
-            [ -s "etcd-${etcd_ver}-linux-amd64.tar.gz" ] || wget -c "https://ghfast.top/https://github.com/etcd-io/etcd/releases/download/${etcd_ver}/etcd-${etcd_ver}-linux-amd64.tar.gz"
-            sudo tar -xzf "etcd-${etcd_ver}-linux-amd64.tar.gz"
-            sudo install -m 755 "etcd-${etcd_ver}-linux-amd64/etcd" /usr/local/bin/etcd
-            sudo install -m 755 "etcd-${etcd_ver}-linux-amd64/etcdctl" /usr/local/bin/etcdctl
-
-            sudo mkdir -p /etc/containerd
-            sudo /usr/local/bin/containerd config default | sudo tee /etc/containerd/config.toml > /dev/null 2>&1
-            sudo sed -i 's@registry.k8s.io@registry.cn-hangzhou.aliyuncs.com/google_containers@' /etc/containerd/config.toml
-
-            sudo systemctl daemon-reload
-            sudo systemctl enable --now containerd.service
-            sudo systemctl restart containerd.service
-          }
-
-          install_kubernetes_tools() {
-            local k8s_minor="1.34"
-            local k8s_mirror="https://mirrors.aliyun.com/kubernetes-new/core/stable"
-
-            sudo install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "${k8s_mirror}/v${k8s_minor}/deb/Release.key" |
-              sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] ${k8s_mirror}/v${k8s_minor}/deb/ /" |
-              sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-            sudo apt update -y
-            sudo apt install -yq kubelet kubeadm kubectl cri-tools kubernetes-cni
-            sudo apt-mark hold kubelet kubeadm kubectl cri-tools kubernetes-cni
-          }
-
-          install_containerd_stack
-          install_kubernetes_tools
-          # 升级kernel 参考其他部分
-          # 修改 让本地hosts生效
-          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
-          echo 'apt_preserve_sources_list: true' | sudo tee -a /etc/cloud/cloud.cfg.d/99-disable-apt-overwrite.cfg
-
-          # 开启sshd的密码验证
-          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
-          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
-          
-          sudo apt upgrade -yq
-          sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
-          history -c
-          sudo init 0
+          apt-get install -y -qq kubelet kubeadm kubectl cri-tools kubernetes-cni
+          apt-mark hold containerd.io runc kubelet kubeadm kubectl cri-tools kubernetes-cni
           EOF
 
-      - name: Setup Ubuntu ${{ github.event.inputs.OS }} Template
-        # if: github.event.inputs.OS == 'ubuntu2204'
+          echo "--- guest/sources.list"
+          cat guest/sources.list
+          echo "--- staged files"
+          ls -l guest/
+
+      - name: Customize image with virt-customize
         if: contains(github.event.inputs.OS, 'ubuntu')
+        env:
+          VER: ${{ steps.ubuntu.outputs.ver }}
+          CODENAME: ${{ steps.ubuntu.outputs.codename }}
         run: |
-          echo setup ${{ github.event.inputs.OS }} ...
-          # ubuntu_ver='22.04' # 20.04
-          # VM_ID=${ubuntu_ver/./}
-          cat > setup_ubuntu_tpl.sh <<EOF
-          # 1. download cloud image
-          # wget http://cloud-images.ubuntu.com/releases/focal/release/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img
-          wget -c https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
-          
-          VM_ID=$VM_ID
-          qm shutdown ${VM_ID} --forceStop
-          sleep 2
-          qm destroy ${VM_ID} --purge
+          set -euo pipefail
+          virt-customize \
+            -a "${IMG}" \
+            --hostname "ubuntu-${VER}-tpl" \
+            --timezone Asia/Shanghai \
+            --copy-in guest/sources.list:/etc/apt/sources.list \
+            --copy-in guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
+            --copy-in guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
+            --copy-in guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
+            --run-command 'rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
+            --run-command 'apt-get update -qq' \
+            --install vim wget telnet qemu-guest-agent curl ca-certificates gnupg lsb-release apt-transport-https jq git iproute2 \
+            --run-command 'bash /root/setup-container-runtime.sh' \
+            --run-command 'apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb' \
+            --run-command 'rm -f /root/setup-container-runtime.sh && truncate -s 0 /var/log/apt/* 2>/dev/null || true' \
+            --run-command 'cloud-init clean --logs --seed && rm -f /etc/machine-id && : > /etc/machine-id'
 
-          # 磁盘默认2.2G, 设置为20G
-          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
-          qemu-img resize ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img 20G
-          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          echo "### customized image"
+          qemu-img info "${IMG}"
+          virt-filesystems -a "${IMG}"
 
-          # 2. create vm
-          # 创建 id 为 1000 的虚拟机，内存大小为 2G ， CPU 核心数量 2，名称是 ubuntu22.04-template 并设置网卡桥接到 vmbr0
-          qm create $VM_ID --core 2 --memory 4096 --name ubuntu${ubuntu_ver/./}tpl --net0 virtio,bridge=vmbr1
+      - name: Register template on PVE
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        env:
+          VM_ID: ${{ steps.ubuntu.outputs.vm_id }}
+          VER: ${{ steps.ubuntu.outputs.ver }}
+        run: |
+          set -euo pipefail
+          pve="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
+          ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          img_name="$(basename "${IMG}")"
 
-          # 3. 导入下载好的云镜像到 local-lvm 存储; 如果没有额外存储，则默认是local
-          qm importdisk $VM_ID ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img  ${STORAGE}
+          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}" "root@${pve}:/root/"
 
-          # 转换云镜像为虚拟磁盘
-          # qm importdisk $VM_ID ubuntu-20.04-server-cloudimg-amd64.img raid0 --format=qcow2
-          # 104 为虚拟机的ID
-          # raid0 为存储的名称，如果没有额外存储，则默认是local
-          # --format=qcow2 为转换后的格式
+          ssh ${ssh_opts} "root@${pve}" 'bash -s' <<EOF
+            set -euxo pipefail
+            VM_ID=${VM_ID}
+            STORAGE=${STORAGE}
+            CIDR=${CIDR}
+            DNS=${DNS}
 
-          # 4. 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
-          # 适用于local-lvm
-          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
-          # 适用于local
-          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
-          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
+            qm shutdown \$VM_ID --forceStop 2>/dev/null || true
+            qm destroy  \$VM_ID --purge       2>/dev/null || true
 
-          # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
-          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
-
-          # 5. 添加 cloud init 驱动器
-          # The next step is to configure a CDROM drive which will be used to pass the Cloud-Init data to the VM.
-          qm set $VM_ID --ide2  ${STORAGE}:cloudinit
-
-          # 6. 将 cloud init 驱动器设置为可启动并限制 BIOS 仅从磁盘启动
-          # To be able to boot directly from the Cloud-Init image, set the bootdisk parameter to scsi0, and restrict BIOS to boot from disk only. This will speed up booting, because VM BIOS skips the testing for a bootable CDROM. 
-          # --boot cdn //启动顺序。cdrom  disk network 
-          qm set $VM_ID --boot cdn --bootdisk scsi0
-
-          # 7. 添加串口控制台
-          # Also configure a serial console and use it as a display. Many Cloud-Init images rely on this, as it is an requirement for OpenStack images.
-          qm set $VM_ID --serial0 socket --vga serial0
-
-          # 导入ssh公钥到虚拟系统
-          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
-          qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0   # 设置用户和密码。注意密码在设置之后，会自动隐藏。
-          # qm set $VM_ID --ssh-pwauth 1
-          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
-          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
-          
-          qm start $VM_ID
-          sleep 45
-
-          # 访问
-          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
-          # 将脚本内容作为命令执行
-          # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
-          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
-          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace setup_ubuntu.sh vagrant@${CIDR}.250:/home/vagrant/
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_ubuntu.sh'
+            qm create \$VM_ID --core 2 --memory 4096 --name ubuntu${VER}tpl --net0 virtio,bridge=vmbr1
+            qm importdisk \$VM_ID /root/${img_name} \$STORAGE
+            qm set \$VM_ID --scsihw virtio-scsi-pci --scsi0 \$STORAGE:vm-\$VM_ID-disk-0
+            qm disk resize \$VM_ID scsi0 20G
+            qm set \$VM_ID --tags "template;ubuntu${VER}"
+            qm set \$VM_ID --ide2 \$STORAGE:cloudinit
+            qm set \$VM_ID --boot cdn --bootdisk scsi0
+            qm set \$VM_ID --serial0 socket --vga serial0
+            qm set \$VM_ID --agent 1
+            qm set \$VM_ID --ipconfig0 ip=\$CIDR.250/24,gw=\$CIDR.1
+            qm set \$VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 1
+            qm set \$VM_ID --nameserver \$DNS --searchdomain example.com
+            qm set \$VM_ID --sshkey /root/.ssh/id_rsa.pub
+            qm template \$VM_ID
           EOF
-          cat setup_ubuntu_tpl.sh
 
-          # copy scripts to PVE
-          for pkg in setup_ubuntu*.sh
-          do
-            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
-          done
-
-          # exec scripts on PVE
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
+          ssh ${ssh_opts} "root@${pve}" "qm config ${VM_ID}"
 
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
