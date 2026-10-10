@@ -225,13 +225,15 @@ jobs:
           set -euo pipefail
           mkdir -p guest
 
-          # Aliyun mirror. Replaces sources.list wholesale so the distro default
-          # never has to be parsed, then the deb822 file is removed separately.
+          # CERNET mirror (https://help.mirrors.cernet.edu.cn/). It 302-redirects to
+          # a per-campus backend and load-balances across them. Replace sources.list
+          # wholesale so the distro default never has to be parsed, then the deb822
+          # file is removed separately because 24.04+ ships that instead.
           cat > guest/sources.list <<EOF
-          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
-          deb https://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse
+          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse
+          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
+          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
+          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse
           EOF
 
           cat > guest/99-homelab.cfg <<'EOF'
@@ -255,12 +257,13 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
 
           install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
+          curl -fsSL https://mirrors.cernet.edu.cn/docker-ce/linux/ubuntu/gpg \
             | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
           chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.cernet.edu.cn/docker-ce/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
             > /etc/apt/sources.list.d/docker.list
 
+          # CERNET does not carry the kubernetes repos, so this one stays on Aliyun.
           k8s_minor=1.34
           curl -fsSL "https://mirrors.aliyun.com/kubernetes-new/core/stable/v${k8s_minor}/deb/Release.key" \
             | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -299,7 +302,9 @@ jobs:
             --copy-in guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
             --run-command 'rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
             --run-command 'apt-get update -qq' \
-            --install vim wget telnet qemu-guest-agent curl ca-certificates gnupg lsb-release apt-transport-https jq git iproute2 \
+            --install vim --install wget --install telnet --install qemu-guest-agent \
+            --install curl --install ca-certificates --install gnupg --install lsb-release \
+            --install apt-transport-https --install jq --install git --install iproute2 \
             --run-command 'bash /root/setup-container-runtime.sh' \
             --run-command 'apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb' \
             --run-command 'rm -f /root/setup-container-runtime.sh && truncate -s 0 /var/log/apt/* 2>/dev/null || true' \
