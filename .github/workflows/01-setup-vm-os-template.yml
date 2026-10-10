@@ -115,41 +115,146 @@ jobs:
         if: contains(github.event.inputs.OS, 'debian')
         run: |
           echo setup Debian script ...
-          if [ "${{ github.event.inputs.OS }}" = "debian13" ]; then
-            DEBIAN_VERSION=13 ; DEBIAN_NAME='trixie'
-            SETUP_DEBIAN_SCRIPT=setup_debian_ge_13.sh
-          elif [ "${{ github.event.inputs.OS }}" = "debian12" ]; then
-            DEBIAN_VERSION=12 ; DEBIAN_NAME='bookworm'
-            SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh
-          elif [ "${{ github.event.inputs.OS }}" = "debian11" ]; then
-            DEBIAN_VERSION=11 ; DEBIAN_NAME='Bullseye'   
-            SETUP_DEBIAN_SCRIPT=setup_debian_le_12.sh        
-          fi
+          case "${{ github.event.inputs.OS }}" in
+            debian13) DEBIAN_VERSION=13 ; DEBIAN_NAME='trixie'   ;;
+            debian12) DEBIAN_VERSION=12 ; DEBIAN_NAME='bookworm' ;;
+            debian11) DEBIAN_VERSION=11 ; DEBIAN_NAME='bullseye' ;;
+            *) echo "::error::unsupported debian release ${{ github.event.inputs.OS }}"; exit 1 ;;
+          esac
           VM_ID=21${DEBIAN_VERSION}
           echo "DEBIAN_VERSION=$DEBIAN_VERSION"      >> "$GITHUB_ENV"
           echo "DEBIAN_NAME=$DEBIAN_NAME"      >> "$GITHUB_ENV"
           echo "VM_ID=$VM_ID"      >> "$GITHUB_ENV"
-          echo "SETUP_DEBIAN_SCRIPT=$SETUP_DEBIAN_SCRIPT"      >> "$GITHUB_ENV"
 
-          cat > setup_debian_le_12.sh <<'EOF'
-          sudo sed -i 's|^deb http://ftp.debian.org|deb https://mirrors.ustc.edu.cn|g' /etc/apt/sources.list
-          sudo sed -i 's|^deb http://security.debian.org|deb https://mirrors.ustc.edu.cn/debian-security|g' /etc/apt/sources.list
-          EOF
+          # One guest script for every release. Which apt source format is
+          # correct is a property of the running guest, not of the workflow
+          # input, so the version split has to happen inside the guest --
+          # otherwise the runner and the image can disagree and apt gets a
+          # source file the release does not understand.
+          # The old per-version pair also wrote to /etc/apt/mirrors/, which no
+          # Debian has ever shipped, so the ge_13 path was a silent no-op.
+          cat > setup_debian.sh <<'EOF'
+          #!/bin/bash
+          # Runs inside the guest. Same contract as setup_ubuntu.sh: re-exec as
+          # root, trace every command, and end with a marker the PVE side can
+          # grep for so a green step cannot hide a half-finished guest.
+          if [ "$(id -u)" -ne 0 ]; then
+            exec sudo -E bash "$0" "$@"
+          fi
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
 
-          cat > setup_debian_ge_13.sh <<'EOF'
-          echo https://mirrors.ustc.edu.cn/debian-security > /etc/apt/mirrors/debian-security.list
-          echo http://mirrors.tencent.com/debian > /etc/apt/mirrors/debian.list
+          # shellcheck disable=SC1091
+          . /etc/os-release
+          CODENAME="${VERSION_CODENAME}"
+          MIRROR="https://mirrors.cernet.edu.cn/debian/"
+          SECURITY_MIRROR="https://mirrors.cernet.edu.cn/debian-security/"
+
+          # --- apt sources -------------------------------------------------------
+          # trixie (13) and newer ship a deb822 file and have no
+          # /etc/apt/sources.list at all; bookworm (12) and older use the
+          # classic one-line-per-suite format. Write whichever one the running
+          # release expects and drop the other, so apt never sees a stale source.
+          # NB: the major version has to be extracted in its own step. Writing
+          # it as ${VERSION_ID%%.*:-0} makes bash read ":-0" as part of the
+          # pattern instead of a default, so it returns "13" unchanged and the
+          # integer comparison then misfires.
+          ver_id="${VERSION_ID:-0}"
+          ver_major="${ver_id%%.*}"
+          case "$ver_major" in
+            ''|*[!0-9]*) ver_major=0 ;;
+          esac
+
+          if [ -f /etc/apt/sources.list.d/debian.sources ] ||
+             [ "$ver_major" -ge 13 ]; then
+            mkdir -p /etc/apt/sources.list.d
+            rm -f /etc/apt/sources.list
+            cat > /etc/apt/sources.list.d/debian.sources <<MIRRORS
+          Types: deb
+          URIs: ${MIRROR}
+          Suites: ${CODENAME} ${CODENAME}-updates
+          Components: main contrib non-free non-free-firmware
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+          Types: deb
+          URIs: ${SECURITY_MIRROR}
+          Suites: ${CODENAME}-security
+          Components: main contrib non-free non-free-firmware
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+          MIRRORS
+            rm -f /etc/apt/sources.list.d/debian.list \
+                  /etc/apt/sources.list.d/debian-security.list \
+                  /etc/apt/sources.list.d/security.list
+          else
+            cat > /etc/apt/sources.list <<MIRRORS
+          deb ${MIRROR} ${CODENAME} main contrib non-free non-free-firmware
+          deb ${MIRROR} ${CODENAME}-updates main contrib non-free non-free-firmware
+          deb ${SECURITY_MIRROR} ${CODENAME}-security main contrib non-free non-free-firmware
+          MIRRORS
+            rm -f /etc/apt/sources.list.d/debian.sources
+          fi
+
+          # --- sshd --------------------------------------------------------------
+          # A drop-in, not a sed over sshd_config.d/*.conf: when that directory
+          # does not exist the glob stays literal and sed aborts on it. sshd
+          # takes the first value it sees and sshd_config Include-s this
+          # directory at the very top, so 01- wins over cloud-init's 50-.
+          mkdir -p /etc/ssh/sshd_config.d
+          cat > /etc/ssh/sshd_config.d/01-homelab.conf <<'SSHD'
+          PermitRootLogin yes
+          PasswordAuthentication yes
+          SSHD
+          sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+          # --- cloud-init --------------------------------------------------------
+          # keep the static /etc/hosts and our sources.list when apt runs
+          mkdir -p /etc/cloud/cloud.cfg.d
+          cat > /etc/cloud/cloud.cfg.d/99-homelab.cfg <<'CLOUD'
+          manage_etc_hosts: false
+          apt_preserve_sources_list: true
+          preserve_hostname: false
+          CLOUD
+
+          # --- packages ----------------------------------------------------------
+          apt-get update
+          apt-get install -y vim wget telnet qemu-guest-agent curl ca-certificates \
+                             gnupg jq git iproute2
+
+          # TEMPORARILY DISABLED: containerd + kubernetes.
+          # bash /root/setup-container-runtime.sh
+
+          systemctl enable qemu-guest-agent
+
+          echo "=== guest setup finished ==="
+
+          # --- cleanup -----------------------------------------------------------
+          set +x   # the glob below would otherwise trace dozens of filenames
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
+          cloud-init clean --logs --seed
+          history -c
           EOF
+          cat setup_debian.sh
       - name: Setup Debian ${{ github.event.inputs.OS }} Template
         if: contains(github.event.inputs.OS, 'debian')
         run: |
           echo setup ${{ github.event.inputs.OS }} ...
           cat > setup_debian_tpl.sh <<EOF
+          set -e
+          # cloud.debian.org has no CERNET mirror (there is no debian-cloud tree
+          # on the university mirrors), but the host itself already resolves to
+          # a Chinese backend. Only apt is repointed, inside the guest.
           wget -c https://cloud.debian.org/images/cloud/${DEBIAN_NAME}/latest/debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2
 
           # disk
           qemu-img resize debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2 20G
           # qm disk resize $VM_ID scsi0 40G # 设置硬盘大小
+
+          # A previous attempt leaves both a VM and a template behind. Without
+          # this the second run of the same release dies on "already exists".
+          qm shutdown ${VM_ID} --forceStop >/dev/null 2>&1 || true
+          sleep 2
+          qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
 
           qm create $VM_ID --core 2 --memory 4096 --name debian${DEBIAN_VERSION}tpl --net0 virtio,bridge=vmbr1
           qm importdisk $VM_ID debian-${DEBIAN_VERSION}-genericcloud-amd64.qcow2 ${STORAGE}
@@ -164,12 +269,36 @@ jobs:
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
-          qm set $VM_ID --cipassword vagrant --ciuser vagrant # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0 # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
 
-          qm start $VM_ID    
-          sleep 45
+          qm start $VM_ID
+
+          # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 45:
+          # 启动快的时候白等,启动慢的时候又连不上。
+          # NOTE: this heredoc is unquoted, so the RUNNER expands dollar signs while
+          # generating the file -- in comments too. CIDR is a runner-side workflow
+          # variable and must stay unescaped so the generated script gets the real
+          # subnet. Every shell variable below belongs to the PVE side and must keep
+          # its backslash, or the runner splices an empty string in at generation time.
+          guest_ip="${CIDR}.250"
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
+          ready=0
+          for i in \$(seq 1 60); do
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -o ConnectTimeout=5 -o BatchMode=yes \
+                   "vagrant@\$guest_ip" true 2>/dev/null; then
+              echo "guest ssh ready after \$((i * 5))s"
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "\$ready" -ne 1 ]; then
+            echo "::error::guest \${guest_ip} did not become reachable over ssh"
+            exit 1
+          fi
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
@@ -178,21 +307,24 @@ jobs:
           # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
           rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
-              -avz --partial --progress --inplace ${SETUP_DEBIAN_SCRIPT} vagrant@${CIDR}.250:/home/vagrant/
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 "bash ${SETUP_DEBIAN_SCRIPT}"
+              -avz --partial --progress --inplace setup_debian.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_debian.sh'
           EOF
-          cat ${SETUP_DEBIAN_SCRIPT}
+          cat setup_debian_tpl.sh
 
           # copy scripts to PVE
-          for pkg in setup_debian_tpl.sh ${SETUP_DEBIAN_SCRIPT}
+          for pkg in setup_debian*.sh
           do
             rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
               -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
           done
 
           # exec scripts on PVE
+          # `set -e` matters: with a plain `;` chain only the LAST command decides
+          # the exit status, so a script that dies mid-way still turns the step
+          # green as long as qm template succeeds.
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_debian_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"                
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash setup_debian_tpl.sh; sleep 5; qm shutdown $VM_ID --forceStop || qm stop $VM_ID --timeout 60 || true; sleep 10; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"                
           
       - name: Setup Ubuntu script
         # if: github.event.inputs.OS == 'ubuntu2404'
@@ -286,8 +418,6 @@ jobs:
 
           echo "=== guest setup finished ==="
 
-          echo "=== guest setup finished ==="
-
           # --- cleanup -----------------------------------------------------------
           set +x   # the glob below would otherwise trace dozens of filenames
           apt-get clean
@@ -366,11 +496,11 @@ jobs:
 
           # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 45:
           # 启动快的时候白等,启动慢的时候又连不上。
-          # NOTE: this heredoc is unquoted, so $ is expanded by the RUNNER. CIDR is a
-          # runner-side workflow variable and must stay unescaped so the generated
-          # script gets the real subnet; everything below ($guest_ip, $i, $ready,
-          # $(seq ...)) belongs to the PVE side and must stay escaped, or the
-          # runner pre-expands it into an empty string / a spliced-in `seq` list.
+          # NOTE: this heredoc is unquoted, so the RUNNER expands dollar signs while
+          # generating the file -- in comments too. CIDR is a runner-side workflow
+          # variable and must stay unescaped so the generated script gets the real
+          # subnet. Every shell variable below belongs to the PVE side and must keep
+          # its backslash, or the runner splices an empty string in at generation time.
           guest_ip="${CIDR}.250"
           ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
           ready=0
@@ -424,39 +554,93 @@ jobs:
           echo "almalinux_ver=$version"      >> "$GITHUB_ENV"
           echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
           cat > setup_almalinux.sh <<'EOF'
-          sudo sed -i '/^PasswordAuthentication/s/no/yes/' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
-          echo "PermitRootLogin yes" | sudo tee /etc/ssh/sshd_config.d/01-permitrootlogin.conf
-          sudo  systemctl restart sshd
+          #!/bin/bash
+          # Runs inside the guest. Same contract as setup_ubuntu.sh /
+          # setup_debian.sh: re-exec as root, trace every command, and end with
+          # a marker the PVE side can grep for.
+          if [ "$(id -u)" -ne 0 ]; then
+            exec sudo -E bash "$0" "$@"
+          fi
+          set -eux
 
-          # sudo  systemctl disable --now firewalld
-          sudo  sed -i 's|SELINUX=enforcing|SELINUX=disabled|' /etc/selinux/config
+          # shellcheck disable=SC1091
+          . /etc/os-release
+          RELEASE="${VERSION_ID%%.*}"
+          MIRROR="https://mirrors.cernet.edu.cn/almalinux"
 
-          sudo  sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-                -e 's|^#.*baseurl=https://.*.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
-                -i.bak \
-                /etc/yum.repos.d/almalinux*.repo
+          # --- yum repos ----------------------------------------------------------
+          # Rewrite the host only and keep the path. The stock files read
+          #   #baseurl=https://repo.almalinux.org/almalinux/$releasever/BaseOS/$basearch/os/
+          # so replacing the WHOLE line (as this script used to) leaves dnf with
+          # a baseurl that has no repository path at all and every transaction
+          # fails with "Failed to download metadata".
+          for repo in /etc/yum.repos.d/almalinux*.repo; do
+            [ -f "$repo" ] || continue
+            sed -i -e 's|^mirrorlist=|#mirrorlist=|' \
+                   -e 's|^metalink=|#metalink=|' \
+                   -e "s,^#*baseurl=https\?://\(repo\|mirror\)\.almalinux\.org/almalinux,baseurl=${MIRROR}," \
+                   "$repo"
+          done
+          # prove the rewrite: a wrong baseurl only surfaces much later, at
+          # dnf transaction time, as an opaque metadata error
+          grep -HE '^(mirrorlist|metalink|baseurl)' /etc/yum.repos.d/almalinux*.repo || true
 
-          # https://mirrors.cloud.tencent.com/almalinux/
-          # https://mirrors.aliyun.com
+          # --- sshd ---------------------------------------------------------------
+          # A drop-in, not a sed over sshd_config.d/*.conf: when that directory
+          # does not exist the glob stays literal and sed aborts on it. sshd
+          # takes the first value it sees and sshd_config Include-s this
+          # directory at the very top, so 01- wins.
+          mkdir -p /etc/ssh/sshd_config.d
+          cat > /etc/ssh/sshd_config.d/01-homelab.conf <<'SSHD'
+          PermitRootLogin yes
+          PasswordAuthentication yes
+          SSHD
+          sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-          # kvm agent
-          sudo yum -y install vim wget telnet qemu-guest-agent socat conntrack ebtables ipset
-          # 升级kernel 参考其他部分
+          # --- SELinux ------------------------------------------------------------
+          if [ -e /etc/selinux/config ]; then
+            sed -i 's|^SELINUX=enforcing|SELINUX=disabled|' /etc/selinux/config
+            # the config edit only lands on the next boot; relax the live policy
+            # too so nothing later in this script fights it
+            if [ -e /sys/fs/selinux/enforce ]; then setenforce 0 || true ; fi
+          fi
 
+          # --- cloud-init ---------------------------------------------------------
           # 修改 让本地hosts生效
-          sudo sed -i '/update_etc_hosts/s/^#*/#/' /etc/cloud/cloud.cfg 
+          mkdir -p /etc/cloud/cloud.cfg.d
+          cat > /etc/cloud/cloud.cfg.d/99-homelab.cfg <<'CLOUD'
+          manage_etc_hosts: false
+          preserve_hostname: false
+          CLOUD
 
-          # 开启sshd的密码验证
-          # sudo sed -i '/ssh_pwauth/s/false/true/' /etc/cloud/cloud.cfg
-          sudo sed -i '/^disable_root/s/true/false/' /etc/cloud/cloud.cfg
+          # --- packages -----------------------------------------------------------
+          dnf -y install vim wget telnet qemu-guest-agent curl ca-certificates \
+                           jq git iproute2 socat conntrack ebtables ipset
 
-          sudo yum update -y
-          sudo yum clean all
+          # TEMPORARILY DISABLED: containerd + kubernetes.
+          # bash /root/setup-container-runtime.sh
+
+          dnf -y update
+          dnf clean all
+          rm -rf /var/cache/dnf
+
+          systemctl enable qemu-guest-agent
+          # best effort: the drop-in is trivial, but a reload failure must not
+          # take the whole guest setup down with it
+          systemctl reload sshd || true
+
+          echo "=== guest setup finished ==="
+
+          # --- cleanup ------------------------------------------------------------
+          # NOTE: the old script ended with `init 0`, which shut the machine down
+          # from under the ssh session and made the PVE-side command chain report
+          # a failure. Shutting down is the PVE side's job now.
+          set +x
+          cloud-init clean --logs --seed
           history -c
-          sudo init 0
           EOF
 
-          # cat setup_almalinux.sh
+          cat setup_almalinux.sh
 
       - name: Setup AlmaLinux ${{ github.event.inputs.OS }} Template
         if: contains(github.event.inputs.OS, 'almalinux')
@@ -465,17 +649,18 @@ jobs:
           echo setup ${{ github.event.inputs.OS }} Template  ...
           # VM_ID=2009
           cat > setup_almalinux_tpl.sh <<EOF
-          # wget -c https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
-          wget -c https://repo.almalinux.org/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
-          # wget -c https://mirrors.aliyun.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
-          # wget -c https://mirrors.cloud.tencent.com/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          set -e
+          # CERNET carries the GenericCloud qcow2 for both 9 and 10, and the
+          # campus mirrors are much faster than repo.almalinux.org from here.
+          wget -c https://mirrors.cernet.edu.cn/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
+          # 上游备份,PVE 直连不通时手工换回来:
+          # wget -c https://repo.almalinux.org/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
           # wget -c https://mirrors.cloud.tencent.com/almalinux/${almalinux_ver}/cloud/x86_64/images/AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2
-          
 
           VM_ID=$VM_ID
-          qm shutdown ${VM_ID} --forceStop
+          qm shutdown ${VM_ID} --forceStop >/dev/null 2>&1 || true
           sleep 2
-          qm destroy ${VM_ID} --purge
+          qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
 
           qm create $VM_ID --core 2 --memory 4096 --name almalinux${almalinux_ver}tpl --net0 virtio,bridge=vmbr1
           qm importdisk $VM_ID AlmaLinux-${almalinux_ver}-GenericCloud-latest.x86_64.qcow2 ${STORAGE}
@@ -493,7 +678,9 @@ jobs:
           qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
           # el9需要设置CPU为host
-          [ "${almalinux_ver}" -ge "9" ] && qm set $VM_ID --cpu cputype=host
+          # an if statement, not a bare conditional-and command: under set -e a
+          # false test used to abort the whole script on almalinux 8
+          if [ "${almalinux_ver}" -ge "9" ]; then qm set $VM_ID --cpu cputype=host ; fi
 
           # 导入ssh公钥到虚拟系统
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
@@ -503,7 +690,31 @@ jobs:
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
           qm start $VM_ID
-          sleep 30
+
+          # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 30:
+          # 启动快的时候白等,启动慢的时候又连不上。
+          # NOTE: this heredoc is unquoted, so the RUNNER expands dollar signs while
+          # generating the file -- in comments too. CIDR is a runner-side workflow
+          # variable and must stay unescaped so the generated script gets the real
+          # subnet. Every shell variable below belongs to the PVE side and must keep
+          # its backslash, or the runner splices an empty string in at generation time.
+          guest_ip="${CIDR}.250"
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
+          ready=0
+          for i in \$(seq 1 60); do
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -o ConnectTimeout=5 -o BatchMode=yes \
+                   "vagrant@\$guest_ip" true 2>/dev/null; then
+              echo "guest ssh ready after \$((i * 5))s"
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "\$ready" -ne 1 ]; then
+            echo "::error::guest \${guest_ip} did not become reachable over ssh"
+            exit 1
+          fi
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
@@ -526,7 +737,10 @@ jobs:
           done
 
           # exec scripts on PVE
+          # `set -e` matters: with a plain `;` chain only the LAST command decides
+          # the exit status, so a script that dies mid-way still turns the step
+          # green as long as qm template succeeds.
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_almalinux_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash setup_almalinux_tpl.sh; sleep 5; qm shutdown $VM_ID --forceStop || qm stop $VM_ID --timeout 60 || true; sleep 10; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"
 
       
