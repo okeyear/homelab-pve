@@ -307,7 +307,7 @@ jobs:
           # qemu-nbd + chroot is the same operation without that appliance layer,
           # and the runner's own network and resolver are known to work.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils parted e2fsprogs
+          sudo apt-get install -y -qq qemu-utils cloud-guest-utils gdisk parted e2fsprogs
 
           img="${IMG}"
           dev=/dev/nbd0
@@ -328,8 +328,12 @@ jobs:
           # qemu-img resize only grows the virtual disk. The GPT entry and the
           # ext4 filesystem inside it stay at the original ~2.2G, so apt runs
           # out of space ("No space left on device") the moment it downloads.
-          # Grow the partition to the end of the disk, then the filesystem.
-          sudo parted -s "$dev" resizepart 1 100%
+          # The backup GPT header is still sitting at the old end of the disk,
+          # which makes a bare `parted resizepart` fail with "Unable to satisfy
+          # all constraints", so move it first with sgdisk, then grow the
+          # partition and the filesystem.
+          sudo sgdisk -e "$dev" || true
+          sudo growpart "$dev" 1 || sudo parted -s "$dev" resizepart 1 100%
           sudo partprobe "$dev" || true
           sleep 2
 
