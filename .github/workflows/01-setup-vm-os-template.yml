@@ -665,8 +665,10 @@ jobs:
           CLOUD
 
           # --- packages -----------------------------------------------------------
+          # `iproute`, not `iproute2`: that is the Debian/Ubuntu name and dnf
+          # fails the whole transaction with "Unable to find a match: iproute2".
           dnf -y install vim wget telnet qemu-guest-agent curl ca-certificates \
-                           jq git iproute2 socat conntrack ebtables ipset
+                           jq git iproute socat conntrack ebtables ipset
 
           # TEMPORARILY DISABLED: containerd + kubernetes.
           # bash /root/setup-container-runtime.sh
