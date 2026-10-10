@@ -286,7 +286,10 @@ jobs:
 
           echo "=== guest setup finished ==="
 
+          echo "=== guest setup finished ==="
+
           # --- cleanup -----------------------------------------------------------
+          set +x   # the glob below would otherwise trace dozens of filenames
           apt-get clean
           rm -rf /var/lib/apt/lists/*
           cloud-init clean --logs --seed
