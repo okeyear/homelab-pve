@@ -276,7 +276,8 @@ jobs:
           apt-get install -y vim wget telnet qemu-guest-agent curl ca-certificates \
                              gnupg jq git iproute2
 
-          bash /root/setup-container-runtime.sh
+          # TEMPORARILY DISABLED: containerd + kubernetes.
+          # bash /root/setup-container-runtime.sh
 
           apt-get clean
           rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
@@ -306,7 +307,7 @@ jobs:
           # qemu-nbd + chroot is the same operation without that appliance layer,
           # and the runner's own network and resolver are known to work.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils
+          sudo apt-get install -y -qq qemu-utils parted e2fsprogs
 
           img="${IMG}"
           dev=/dev/nbd0
@@ -324,6 +325,14 @@ jobs:
           sudo mkdir -p "$mnt"
           sudo qemu-nbd --connect="$dev" --format=qcow2 "$img"
 
+          # qemu-img resize only grows the virtual disk. The GPT entry and the
+          # ext4 filesystem inside it stay at the original ~2.2G, so apt runs
+          # out of space ("No space left on device") the moment it downloads.
+          # Grow the partition to the end of the disk, then the filesystem.
+          sudo parted -s "$dev" resizepart 1 100%
+          sudo partprobe "$dev" || true
+          sleep 2
+
           part=$(sudo lsblk -lnpo NAME,FSTYPE "$dev" | awk '$2 ~ /ext4|xfs|btrfs/ {print $1; exit}')
           if [ -z "$part" ]; then
             sudo partprobe "$dev" || true
@@ -336,6 +345,8 @@ jobs:
             exit 1
           fi
           echo "root partition: $part"
+          sudo resize2fs "$part"
+          sudo lsblk -lno NAME,SIZE,FSTYPE "$dev"
 
           sudo mount "$part" "$mnt"
           sudo mount --bind /dev        "$mnt/dev"
