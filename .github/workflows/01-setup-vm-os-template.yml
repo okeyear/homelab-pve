@@ -288,7 +288,7 @@ jobs:
 
           # --- cleanup -----------------------------------------------------------
           apt-get clean
-          rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+          rm -rf /var/lib/apt/lists/*
           cloud-init clean --logs --seed
           history -c
           EOF
@@ -410,7 +410,7 @@ jobs:
           # the exit status, so a script that dies mid-way still turns the step
           # green as long as qm template succeeds.
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID --forceStop || true; sleep 5; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash setup_ubuntu_tpl.sh; sleep 5; qm shutdown $VM_ID --forceStop || qm stop $VM_ID --timeout 60 || true; sleep 10; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"
 
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
