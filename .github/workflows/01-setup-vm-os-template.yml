@@ -84,7 +84,20 @@ jobs:
           test -d ~/.ssh || mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
-          sudo apt install -yq cloud-image-utils rsync
+          # The Tailscale action installs its own package just before this, so
+          # dpkg can still be locked when we get here. Wait it out and retry
+          # instead of dying on a bare exit 1 with no output at all.
+          sudo apt-get update -qq
+          installed=0
+          for i in $(seq 1 10); do
+            if sudo apt-get install -y -qq cloud-image-utils rsync; then
+              installed=1
+              break
+            fi
+            echo "apt-get install attempt $i failed, retrying"
+            sleep $((i * 5))
+          done
+          [ "$installed" -eq 1 ] || { echo "::error::could not install cloud-image-utils rsync"; exit 1; }
 
       - name: Setup Debian script
         if: contains(github.event.inputs.OS, 'debian')
