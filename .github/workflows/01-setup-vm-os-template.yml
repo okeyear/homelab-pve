@@ -356,10 +356,12 @@ jobs:
 
           # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 45:
           # 启动快的时候白等,启动慢的时候又连不上。
-          # NOTE: this heredoc is unquoted, so every $ below is expanded by the
-          # RUNNER. They must stay escaped or the generated script comes out with
-          # empty variables and a pre-expanded `seq` spliced into it.
-          guest_ip="\${CIDR}.250"
+          # NOTE: this heredoc is unquoted, so $ is expanded by the RUNNER. CIDR is a
+          # runner-side workflow variable and must stay unescaped so the generated
+          # script gets the real subnet; everything below ($guest_ip, $i, $ready,
+          # $(seq ...)) belongs to the PVE side and must stay escaped, or the
+          # runner pre-expands it into an empty string / a spliced-in `seq` list.
+          guest_ip="${CIDR}.250"
           ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
           ready=0
           for i in \$(seq 1 60); do
