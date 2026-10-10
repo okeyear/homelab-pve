@@ -84,13 +84,25 @@ jobs:
           test -d ~/.ssh || mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
-          # The Tailscale action installs its own package just before this, so
-          # dpkg can still be locked when we get here. Wait it out and retry
-          # instead of dying on a bare exit 1 with no output at all.
-          sudo apt-get update -qq
+          # The Tailscale action installs its own package immediately before this step and
+          # its apt/dpkg can still be running when we get here. Both apt-get update
+          # and the install then die on a lock, and with -qq the error is swallowed
+          # so the step just ends with a bare exit 1. Wait for the package manager
+          # to go idle first, and keep the output so a real failure is readable.
+          for i in $(seq 1 30); do
+            if ! pgrep -x apt-get >/dev/null 2>&1 &&
+               ! pgrep -x dpkg    >/dev/null 2>&1 &&
+               ! pgrep -x apt     >/dev/null 2>&1; then
+              break
+            fi
+            echo "apt/dpkg still busy, waiting..."
+            sleep 2
+          done
+
+          sudo apt-get update
           installed=0
-          for i in $(seq 1 10); do
-            if sudo apt-get install -y -qq cloud-image-utils rsync; then
+          for i in $(seq 1 5); do
+            if sudo apt-get install -y cloud-image-utils rsync; then
               installed=1
               break
             fi
