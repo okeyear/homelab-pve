@@ -579,21 +579,62 @@ jobs:
           MIRROR="https://mirrors.cernet.edu.cn/almalinux"
 
           # --- yum repos ----------------------------------------------------------
-          # Rewrite the host only and keep the path. The stock files read
-          #   #baseurl=https://repo.almalinux.org/almalinux/$releasever/BaseOS/$basearch/os/
-          # so replacing the WHOLE line (as this script used to) leaves dnf with
-          # a baseurl that has no repository path at all and every transaction
-          # fails with "Failed to download metadata".
+          # AlmaLinux 9/10 cloud images ship repo files that carry ONLY a
+          # metalink=, with no commented baseurl= fallback line to rewrite.
+          # Commenting the metalink out therefore leaves dnf with nothing at
+          # all, and the very first transaction dies with "Cannot find a valid
+          # baseurl for repo: appstream". Editing the stock files in place
+          # cannot work here -- disable them and declare what we need.
+          mkdir -p /etc/yum.repos.d
           for repo in /etc/yum.repos.d/almalinux*.repo; do
             [ -f "$repo" ] || continue
-            sed -i -e 's|^mirrorlist=|#mirrorlist=|' \
-                   -e 's|^metalink=|#metalink=|' \
-                   -e "s,^#*baseurl=https\?://\(repo\|mirror\)\.almalinux\.org/almalinux,baseurl=${MIRROR}," \
-                   "$repo"
+            mv "$repo" "$repo.disabled"
           done
-          # prove the rewrite: a wrong baseurl only surfaces much later, at
-          # dnf transaction time, as an opaque metadata error
-          grep -HE '^(mirrorlist|metalink|baseurl)' /etc/yum.repos.d/almalinux*.repo || true
+
+          # gpgkey is only legal if the keyring file is really there; naming a
+          # missing file is itself a hard dnf error
+          GPGKEY=''
+          for k in /etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux \
+                   /etc/pki/rpm-gpg/RPM-GPG-KEY-almalinux; do
+            if [ -f "$k" ]; then GPGKEY="gpgkey=file://$k"; break; fi
+          done
+
+          # The directory names are CASE SENSITIVE on the mirror: BaseOS,
+          # AppStream, extras and CRB, not baseos/appstream/crb. RELEASE comes
+          # from the guest's own os-release; basearch must survive this guest
+          # shell, which is why it keeps a backslash.
+          cat > /etc/yum.repos.d/99-homelab.repo <<REPO
+          [baseos]
+          name=AlmaLinux ${RELEASE} - BaseOS
+          baseurl=${MIRROR}/${RELEASE}/BaseOS/\$basearch/os/
+          ${GPGKEY}
+          gpgcheck=1
+          enabled=1
+
+          [appstream]
+          name=AlmaLinux ${RELEASE} - AppStream
+          baseurl=${MIRROR}/${RELEASE}/AppStream/\$basearch/os/
+          ${GPGKEY}
+          gpgcheck=1
+          enabled=1
+
+          [extras]
+          name=AlmaLinux ${RELEASE} - Extras
+          baseurl=${MIRROR}/${RELEASE}/extras/\$basearch/os/
+          ${GPGKEY}
+          gpgcheck=1
+          enabled=1
+
+          [crb]
+          name=AlmaLinux ${RELEASE} - CRB
+          baseurl=${MIRROR}/${RELEASE}/CRB/\$basearch/os/
+          ${GPGKEY}
+          gpgcheck=1
+          enabled=1
+          REPO
+          # prove the result: a wrong baseurl only surfaces much later, at dnf
+          # transaction time, as an opaque metadata error
+          grep -HE '^(name|baseurl|gpgkey)' /etc/yum.repos.d/99-homelab.repo
 
           # --- sshd ---------------------------------------------------------------
           # A drop-in, not a sed over sshd_config.d/*.conf: when that directory
