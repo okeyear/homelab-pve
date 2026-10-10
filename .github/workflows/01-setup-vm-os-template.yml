@@ -356,21 +356,24 @@ jobs:
 
           # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 45:
           # 启动快的时候白等,启动慢的时候又连不上。
-          guest_ip="${CIDR}.250"
-          ssh-keygen -f "/root/.ssh/known_hosts" -R "$guest_ip" >/dev/null 2>&1 || true
+          # NOTE: this heredoc is unquoted, so every $ below is expanded by the
+          # RUNNER. They must stay escaped or the generated script comes out with
+          # empty variables and a pre-expanded `seq` spliced into it.
+          guest_ip="\${CIDR}.250"
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
           ready=0
-          for i in $(seq 1 60); do
+          for i in \$(seq 1 60); do
             if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                    -o ConnectTimeout=5 -o BatchMode=yes \
-                   "vagrant@$guest_ip" true 2>/dev/null; then
-              echo "guest ssh ready after $((i * 5))s"
+                   "vagrant@\$guest_ip" true 2>/dev/null; then
+              echo "guest ssh ready after \$((i * 5))s"
               ready=1
               break
             fi
             sleep 5
           done
-          if [ "$ready" -ne 1 ]; then
-            echo "::error::guest ${guest_ip} did not become reachable over ssh"
+          if [ "\$ready" -ne 1 ]; then
+            echo "::error::guest \${guest_ip} did not become reachable over ssh"
             exit 1
           fi
 
@@ -394,8 +397,11 @@ jobs:
           done
 
           # exec scripts on PVE
+          # `set -e` matters: with a plain `;` chain only the LAST command decides
+          # the exit status, so a script that dies mid-way still turns the step
+          # green as long as qm template succeeds.
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID --forceStop || true; sleep 5; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"
 
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
