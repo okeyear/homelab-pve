@@ -342,7 +342,7 @@ jobs:
             --hostname "ubuntu-${VER}-tpl" \
             --timezone Asia/Shanghai \
             --upload guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
-            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
+            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur /etc/resolv.conf' \
             --upload guest/sources.list:/etc/apt/sources.list \
             --upload guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
             --upload guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
