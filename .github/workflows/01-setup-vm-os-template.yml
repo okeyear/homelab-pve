@@ -169,109 +169,58 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
           root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_debian_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"                
           
-      - name: Resolve Ubuntu version
-        id: ubuntu
+      - name: Setup Ubuntu script
+        # if: github.event.inputs.OS == 'ubuntu2404'
         if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
-          set -euo pipefail
-          ver='${{ github.event.inputs.OS }}'
-          ver="${ver#ubuntu}"
-          case "$ver" in
-            22.04) codename=jammy    ;;
-            24.04) codename=noble    ;;
-            26.04) codename=resolute ;;
-            *) echo "::error::unsupported ubuntu $ver"; exit 1 ;;
-          esac
-          vm_id="${ver/./}"
-          echo "ver=${ver}"          >> "$GITHUB_OUTPUT"
-          echo "codename=${codename}" >> "$GITHUB_OUTPUT"
-          echo "vm_id=${vm_id}"      >> "$GITHUB_OUTPUT"
+          echo setup ubuntu script ...
+          version=$(echo ${{ github.event.inputs.OS }} | sed 's@ubuntu@@')
+          vmid=${version/./}
+          echo "ubuntu_ver=$version"      >> "$GITHUB_ENV"
+          echo "VM_ID=$vmid"      >> "$GITHUB_ENV"
 
-      - name: Download cloud image
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        env:
-          VER: ${{ steps.ubuntu.outputs.ver }}
-        run: |
-          set -euo pipefail
-          img="ubuntu-${VER}-server-cloudimg-amd64.img"
-          url="https://cloud-images.ubuntu.com/releases/${VER}/release/${img}"
-          echo "downloading ${url}"
-          wget -q -c -O "$img" "$url"
-          ls -lh "$img"
-          echo "IMG=${img}" >> "$GITHUB_ENV"
+          cat > setup_ubuntu.sh <<'EOF'
+          #!/bin/bash
+          # Runs inside the guest. Everything here is plain distro tooling.
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
 
-      - name: Stage guest customization files
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        env:
-          CODENAME: ${{ steps.ubuntu.outputs.codename }}
-        run: |
-          set -euo pipefail
-          rm -rf guest
-          mkdir -p guest
+          # shellcheck disable=SC1091
+          . /etc/os-release
+          CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
+          MIRROR="https://mirrors.cernet.edu.cn/ubuntu/"
 
-          # CERNET mirror (https://help.mirrors.cernet.edu.cn/). It 302-redirects to
-          # a per-campus backend and load-balances across them. Replace sources.list
-          # wholesale so the distro default never has to be parsed; the deb822 file
-          # is dropped separately because 24.04+ ships that instead.
-          cat > guest/sources.list <<EOF
-          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse
-          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
-          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
-          deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse
-          EOF
+          # --- apt sources -------------------------------------------------------
+          # 24.04+ ship a deb822 file at /etc/apt/sources.list.d/ubuntu.sources and
+          # have no /etc/apt/sources.list at all, so removing that one file and
+          # writing our own sources.list is what covers every release.
+          rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur
+          cat > /etc/apt/sources.list <<MIRRORS
+          deb ${MIRROR} ${CODENAME} main restricted universe multiverse
+          deb ${MIRROR} ${CODENAME}-updates main restricted universe multiverse
+          deb ${MIRROR} ${CODENAME}-backports main restricted universe multiverse
+          deb ${MIRROR} ${CODENAME}-security main restricted universe multiverse
+          MIRRORS
 
-          cat > guest/99-homelab.cfg <<'EOF'
-          # keep static /etc/hosts; keep our sources.list when apt runs
-          apt_preserve_sources_list: true
-          preserve_hostname: false
-          manage_etc_hosts: false
-          datasource_list: [ ConfigDrive, NoCloud ]
-          EOF
-
-          cat > guest/01-permitrootlogin.conf <<'EOF'
+          # --- sshd --------------------------------------------------------------
+          # A drop-in, not a sed over sshd_config.d/*.conf: when that directory
+          # does not exist the glob stays literal and sed aborts on it.
+          mkdir -p /etc/ssh/sshd_config.d
+          cat > /etc/ssh/sshd_config.d/01-homelab.conf <<'SSHD'
           PermitRootLogin yes
           PasswordAuthentication yes
-          EOF
+          SSHD
+          sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-          # Repos that have no first-class Ubuntu package: containerd/runc from
-          # the Docker repo, kubeadm/kubelet/kubectl from the kubernetes repo.
-          cat > guest/setup-container-runtime.sh <<'EOF'
-          set -euxo pipefail
-          export DEBIAN_FRONTEND=noninteractive
+          # --- cloud-init --------------------------------------------------------
+          # keep the static /etc/hosts and our sources.list when apt runs
+          cat > /etc/cloud/cloud.cfg.d/99-homelab.cfg <<'CLOUD'
+          manage_etc_hosts: false
+          apt_preserve_sources_list: true
+          preserve_hostname: false
+          CLOUD
 
-          install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://mirrors.cernet.edu.cn/docker-ce/linux/ubuntu/gpg \
-            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.cernet.edu.cn/docker-ce/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-            > /etc/apt/sources.list.d/docker.list
-
-          # CERNET does not carry the kubernetes repos, so this one stays on Aliyun.
-          k8s_minor=1.34
-          curl -fsSL "https://mirrors.aliyun.com/kubernetes-new/core/stable/v${k8s_minor}/deb/Release.key" \
-            | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://mirrors.aliyun.com/kubernetes-new/core/stable/v${k8s_minor}/deb/ /" \
-            > /etc/apt/sources.list.d/kubernetes.list
-
-          apt-get update -qq
-          apt-get install -y -qq containerd.io runc
-
-          containerd config default > /etc/containerd/config.toml
-          sed -i 's@registry.k8s.io@registry.cn-hangzhou.aliyuncs.com/google_containers@' /etc/containerd/config.toml
-
-          apt-get install -y -qq kubelet kubeadm kubectl cri-tools kubernetes-cni
-          apt-mark hold containerd.io runc kubelet kubeadm kubectl cri-tools kubernetes-cni
-          EOF
-
-          # Runs inside the chroot. argv1 is the hostname.
-          cat > guest/setup.sh <<'EOF'
-          #!/bin/bash
-          set -euxo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-
-          rm -f /etc/machine-id /etc/hostname
-          echo "$1" > /etc/hostname
-
+          # --- packages ----------------------------------------------------------
           apt-get update
           apt-get install -y vim wget telnet qemu-guest-agent curl ca-certificates \
                              gnupg jq git iproute2
@@ -279,157 +228,107 @@ jobs:
           # TEMPORARILY DISABLED: containerd + kubernetes.
           # bash /root/setup-container-runtime.sh
 
+          systemctl enable qemu-guest-agent
+
+          # --- cleanup -----------------------------------------------------------
           apt-get clean
           rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
-          rm -f /root/setup-container-runtime.sh /root/setup.sh
-
           cloud-init clean --logs --seed
-          : > /etc/machine-id
+          history -c
           EOF
 
-          echo "--- guest/sources.list"
-          cat guest/sources.list
-          ls -l guest/
-
-      - name: Customize image offline
+      - name: Setup Ubuntu ${{ github.event.inputs.OS }} Template
+        # if: github.event.inputs.OS == 'ubuntu2204'
         if: contains(github.event.inputs.OS, 'ubuntu')
-        env:
-          VER: ${{ steps.ubuntu.outputs.ver }}
         run: |
-          set -euo pipefail
-          # The image is customized through a chroot on the runner rather than
-          # with virt-customize. virt-customize needs a libguestfs appliance, and
-          # inside one on a hosted runner the guest cannot resolve anything:
-          # passt never forwards DNS in that sandbox and libguestfs overlays the
-          # appliance resolv.conf onto the guest's, so not even apt works.
-          # Running on PVE instead is blocked by pve-apt-hook, which refuses
-          # any transaction that would replace pve-qemu-kvm.
-          # qemu-nbd + chroot is the same operation without that appliance layer,
-          # and the runner's own network and resolver are known to work.
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils cloud-guest-utils gdisk parted e2fsprogs
-
-          img="${IMG}"
-          dev=/dev/nbd0
-          mnt=/mnt/tpl-build
-
-          cleanup() {
-            sudo umount -R "$mnt"     2>/dev/null || true
-            sudo qemu-nbd --disconnect "$dev" 2>/dev/null || true
-            sudo rmdir "$mnt"         2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          sudo qemu-img resize "$img" 20G
-          sudo modprobe nbd max_part=16
-          sudo mkdir -p "$mnt"
-          sudo qemu-nbd --connect="$dev" --format=qcow2 "$img"
-
-          # qemu-img resize only grows the virtual disk. The GPT entry and the
-          # ext4 filesystem inside it stay at the original ~2.2G, so apt runs
-          # out of space ("No space left on device") the moment it downloads.
-          # The backup GPT header is still sitting at the old end of the disk,
-          # which makes a bare `parted resizepart` fail with "Unable to satisfy
-          # all constraints", so move it first with sgdisk, then grow the
-          # partition and the filesystem.
-          sudo sgdisk -e "$dev" || true
-          sudo growpart "$dev" 1 || sudo parted -s "$dev" resizepart 1 100%
-          sudo partprobe "$dev" || true
+          echo setup ${{ github.event.inputs.OS }} ...
+          # ubuntu_ver='22.04' # 20.04
+          # VM_ID=${ubuntu_ver/./}
+          cat > setup_ubuntu_tpl.sh <<EOF
+          # 1. download cloud image
+          # wget http://cloud-images.ubuntu.com/releases/focal/release/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img
+          wget -c https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          
+          VM_ID=$VM_ID
+          qm shutdown ${VM_ID} --forceStop
           sleep 2
+          qm destroy ${VM_ID} --purge
 
-          part=$(sudo lsblk -lnpo NAME,FSTYPE "$dev" | awk '$2 ~ /ext4|xfs|btrfs/ {print $1; exit}')
-          if [ -z "$part" ]; then
-            sudo partprobe "$dev" || true
-            sleep 3
-            part=$(sudo lsblk -lnpo NAME,FSTYPE "$dev" | awk '$2 ~ /ext4|xfs|btrfs/ {print $1; exit}')
-          fi
-          if [ -z "$part" ]; then
-            echo "::error::no root filesystem found on ${dev}"
-            sudo lsblk -lno NAME,SIZE,FSTYPE,MOUNTPOINT "$dev" || true
-            exit 1
-          fi
-          echo "root partition: $part"
-          # Cloud images ship the ext4 with a dirty flag, and resize2fs refuses
-          # to touch it until fsck has run.
-          sudo e2fsck -f -y "$part" || echo "::warning::e2fsck returned $?"
-          sudo resize2fs "$part"
-          sudo lsblk -lno NAME,SIZE,FSTYPE "$dev"
+          # 磁盘默认2.2G, 设置为20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
+          qemu-img resize ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img 20G
+          qemu-img info ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img
 
-          sudo mount "$part" "$mnt"
-          sudo mount --bind /dev        "$mnt/dev"
-          sudo mount --bind /dev/pts    "$mnt/dev/pts"
-          sudo mount -t proc proc       "$mnt/proc"
-          sudo mount --bind /sys        "$mnt/sys"
+          # 2. create vm
+          # 创建 id 为 1000 的虚拟机，内存大小为 2G ， CPU 核心数量 2，名称是 ubuntu22.04-template 并设置网卡桥接到 vmbr0
+          qm create $VM_ID --core 2 --memory 4096 --name ubuntu${ubuntu_ver/./}tpl --net0 virtio,bridge=vmbr1
 
-          sudo mkdir -p "$mnt/etc/cloud/cloud.cfg.d" "$mnt/etc/ssh/sshd_config.d" "$mnt/root"
-          # Cloud images ship these as symlinks pointing at paths that do not
-          # exist while the image is offline, so any shell redirect into them
-          # follows the link and fails with ENOENT. Clear them first.
-          sudo rm -f "$mnt/etc/resolv.conf" "$mnt/etc/machine-id" "$mnt/etc/hostname"
-          printf 'nameserver %s\nnameserver 119.29.29.29\n' "${{ env.DNS }}" \
-            | sudo tee "$mnt/etc/resolv.conf" > /dev/null
-          sudo rm -f "$mnt/etc/apt/sources.list.d/ubuntu.sources" "$mnt/etc/apt/sources.list.d/ubuntu.sources.cur"
-          sudo cp guest/sources.list              "$mnt/etc/apt/sources.list"
-          sudo cp guest/99-homelab.cfg            "$mnt/etc/cloud/cloud.cfg.d/99-homelab.cfg"
-          sudo cp guest/01-permitrootlogin.conf   "$mnt/etc/ssh/sshd_config.d/01-permitrootlogin.conf"
-          sudo cp guest/setup.sh                  "$mnt/root/setup.sh"
-          sudo cp guest/setup-container-runtime.sh "$mnt/root/setup-container-runtime.sh"
+          # 3. 导入下载好的云镜像到 local-lvm 存储; 如果没有额外存储，则默认是local
+          qm importdisk $VM_ID ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img  ${STORAGE}
 
-          sudo chroot "$mnt" /bin/bash /root/setup.sh "ubuntu-${{ steps.ubuntu.outputs.ver }}-tpl"
+          # 转换云镜像为虚拟磁盘
+          # qm importdisk $VM_ID ubuntu-20.04-server-cloudimg-amd64.img raid0 --format=qcow2
+          # 104 为虚拟机的ID
+          # raid0 为存储的名称，如果没有额外存储，则默认是local
+          # --format=qcow2 为转换后的格式
 
-          echo "=== packages installed in the guest"
-          sudo chroot "$mnt" dpkg -l qemu-guest-agent curl jq 2>/dev/null | tail -5 || true
+          # 4. 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local
+          # qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
 
-          cleanup
-          trap - EXIT
-          sudo qemu-img info "$img"
+          # 设置磁盘暂时未生效 qm set $VM_ID --scsi0 file=local-lvm:vm-${VM_ID}-disk-0,size=20480M
+          qm disk resize $VM_ID scsi0 20G # 设置硬盘大小
 
-      - name: Register template on PVE
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        env:
-          VM_ID: ${{ steps.ubuntu.outputs.vm_id }}
-          VER: ${{ steps.ubuntu.outputs.ver }}
-        run: |
-          set -euo pipefail
-          pve="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
-          ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-          img_name="$(basename "${IMG}")"
+          # 5. 添加 cloud init 驱动器
+          # The next step is to configure a CDROM drive which will be used to pass the Cloud-Init data to the VM.
+          qm set $VM_ID --ide2  ${STORAGE}:cloudinit
 
-          # Only the finished image and the qm calls cross to PVE. Nothing is
-          # installed there: pve-apt-hook refuses any apt transaction that would
-          # replace pve-qemu-kvm, so PVE keeps its own package set untouched.
-          cat > register_template.sh <<'SCRIPT'
-          #!/usr/bin/env bash
-          set -euxo pipefail
-          : "${VM_ID:?}" "${VER:?}" "${STORAGE:?}" "${CIDR:?}" "${DNS:?}" "${IMG_NAME:?}"
+          # 6. 将 cloud init 驱动器设置为可启动并限制 BIOS 仅从磁盘启动
+          # To be able to boot directly from the Cloud-Init image, set the bootdisk parameter to scsi0, and restrict BIOS to boot from disk only. This will speed up booting, because VM BIOS skips the testing for a bootable CDROM. 
+          # --boot cdn //启动顺序。cdrom  disk network 
+          qm set $VM_ID --boot cdn --bootdisk scsi0
 
-          IMG="/root/${IMG_NAME}"
+          # 7. 添加串口控制台
+          # Also configure a serial console and use it as a display. Many Cloud-Init images rely on this, as it is an requirement for OpenStack images.
+          qm set $VM_ID --serial0 socket --vga serial0
 
-          qm shutdown "$VM_ID" --forceStop 2>/dev/null || true
-          qm destroy  "$VM_ID" --purge       2>/dev/null || true
+          # 导入ssh公钥到虚拟系统
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=$CIDR.250/24,gw=$CIDR.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0   # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          # qm set $VM_ID --ssh-pwauth 1
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
+          
+          qm start $VM_ID
+          sleep 45
 
-          qm create "$VM_ID" --core 2 --memory 4096 --name "ubuntu${VER}tpl" --net0 virtio,bridge=vmbr1
-          qm importdisk "$VM_ID" "$IMG" "$STORAGE"
-          qm set "$VM_ID" --scsihw virtio-scsi-pci --scsi0 "$STORAGE:vm-${VM_ID}-disk-0"
-          qm disk resize "$VM_ID" scsi0 20G
-          qm set "$VM_ID" --tags "template;ubuntu${VER}"
-          qm set "$VM_ID" --ide2 "$STORAGE:cloudinit"
-          qm set "$VM_ID" --boot cdn --bootdisk scsi0
-          qm set "$VM_ID" --serial0 socket --vga serial0
-          qm set "$VM_ID" --agent 1
-          qm set "$VM_ID" --ipconfig0 "ip=${CIDR}.250/24,gw=${CIDR}.1"
-          qm set "$VM_ID" --cipassword vagrant --ciuser vagrant --ciupgrade 1
-          qm set "$VM_ID" --nameserver "$DNS" --searchdomain example.com
-          qm set "$VM_ID" --sshkey /root/.ssh/id_rsa.pub
-          qm template "$VM_ID"
+          # 访问
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
+          # 将脚本内容作为命令执行
+          # qm guest exec $VM_ID -- bash -c "\$(cat setup_ubuntu.sh)"
+          # alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          # cat setup_ubuntu.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'sudo bash -s'
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace setup_ubuntu.sh vagrant@${CIDR}.250:/home/vagrant/
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@${CIDR}.250 'bash setup_ubuntu.sh'
+          EOF
+          cat setup_ubuntu_tpl.sh
 
-          qm config "$VM_ID"
-          SCRIPT
+          # copy scripts to PVE
+          for pkg in setup_ubuntu*.sh
+          do
+            rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+              -avz --partial --progress --inplace $pkg root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+          done
 
-          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}" register_template.sh "root@${pve}:/root/"
+          # exec scripts on PVE
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "bash setup_ubuntu_tpl.sh; sleep 5; qm stop $VM_ID; sleep 5;qm set $VM_ID --ciupgrade 1; qm template $VM_ID"
 
-          ssh ${ssh_opts} "root@${pve}" \
-            "VM_ID=${VM_ID} VER=${VER} STORAGE=${STORAGE} CIDR=${CIDR} DNS=${DNS} IMG_NAME=${img_name} bash /root/register_template.sh"
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
         run: |
