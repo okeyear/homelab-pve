@@ -269,6 +269,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
 
+          rm -f /etc/machine-id /etc/hostname
           echo "$1" > /etc/hostname
 
           apt-get update
@@ -343,6 +344,10 @@ jobs:
           sudo mount --bind /sys        "$mnt/sys"
 
           sudo mkdir -p "$mnt/etc/cloud/cloud.cfg.d" "$mnt/etc/ssh/sshd_config.d" "$mnt/root"
+          # Cloud images ship these as symlinks pointing at paths that do not
+          # exist while the image is offline, so any shell redirect into them
+          # follows the link and fails with ENOENT. Clear them first.
+          sudo rm -f "$mnt/etc/resolv.conf" "$mnt/etc/machine-id" "$mnt/etc/hostname"
           printf 'nameserver %s\nnameserver 119.29.29.29\n' "${{ env.DNS }}" \
             | sudo tee "$mnt/etc/resolv.conf" > /dev/null
           sudo rm -f "$mnt/etc/apt/sources.list.d/ubuntu.sources" "$mnt/etc/apt/sources.list.d/ubuntu.sources.cur"
