@@ -210,6 +210,18 @@ jobs:
           echo 'LIBGUESTFS_BACKEND=direct' >> "$GITHUB_ENV"
           echo 'LIBGUESTFS_MEMSIZE=2048'    >> "$GITHUB_ENV"
 
+          # /dev/kvm exists on the hosted image but is group-owned by kvm(993)
+          # and the runner user is not in that group, so libguestfs ran under
+          # TCG. libguestfs itself recommends exactly this chmod.
+          sudo chmod 0666 /dev/kvm 2>/dev/null || true
+
+          # passt writes its socket and pid file under $XDG_RUNTIME_DIR. GitHub's
+          # runner user has no systemd-logind, so /run/user/1001 does not exist
+          # and passt dies with "PID file open: Permission denied".
+          # libguestfs: error: passt exited with status 1
+          echo "XDG_RUNTIME_DIR=/tmp" >> "$GITHUB_ENV"
+          echo "TMPDIR=/var/tmp"       >> "$GITHUB_ENV"
+
           echo "--- acceleration"
           ls -l /dev/kvm 2>&1 || echo "(absent: libguestfs falls back to TCG, slower but works)"
 
@@ -217,9 +229,10 @@ jobs:
         if: contains(github.event.inputs.OS, 'ubuntu')
         run: |
           set -euo pipefail
-          # Boot the appliance once up front. If this passes, the only remaining
-          # variable in virt-customize is the guest itself.
-          libguestfs-test-tool
+          # Boot the appliance once up front, with networking on so passt is
+          # exercised too. If this passes, the only remaining variable in
+          # virt-customize is the guest itself.
+          libguestfs-test-tool --network
 
       - name: Download cloud image
         if: contains(github.event.inputs.OS, 'ubuntu')
