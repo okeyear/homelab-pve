@@ -187,68 +187,6 @@ jobs:
           echo "codename=${codename}" >> "$GITHUB_OUTPUT"
           echo "vm_id=${vm_id}"      >> "$GITHUB_OUTPUT"
 
-      - name: Install image build tools
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils libguestfs-tools
-
-          # Ubuntu ships /boot/vmlinuz-* mode 0600, but supermin has to read the
-          # kernel as the unprivileged runner user. Without this it fails with a
-          # bare "supermin exited with error status 1" and no real reason.
-          # https://bugs.launchpad.net/ubuntu/+bug/759725
-          sudo chmod 0644 /boot/vmlinuz* 2>/dev/null || true
-          kver="$(uname -r)"
-          if [ -f "/boot/vmlinuz-${kver}" ]; then
-            sudo dpkg-statoverride --force-statoverride-add --update \
-              --add root root 0644 "/boot/vmlinuz-${kver}"
-          fi
-
-          # The libvirt backend refuses to open files owned by root; direct avoids
-          # that class of failure entirely.
-          echo 'LIBGUESTFS_BACKEND=direct' >> "$GITHUB_ENV"
-          echo 'LIBGUESTFS_MEMSIZE=2048'    >> "$GITHUB_ENV"
-
-          # /dev/kvm exists on the hosted image but is group-owned by kvm(993)
-          # and the runner user is not in that group, so libguestfs ran under
-          # TCG. libguestfs itself recommends exactly this chmod.
-          sudo chmod 0666 /dev/kvm 2>/dev/null || true
-
-          # passt writes its socket and pid file under $XDG_RUNTIME_DIR. GitHub's
-          # runner user has no systemd-logind, so /run/user/1001 does not exist
-          # and passt dies with "PID file open: Permission denied".
-          # libguestfs: error: passt exited with status 1
-          echo "XDG_RUNTIME_DIR=/tmp" >> "$GITHUB_ENV"
-          echo "TMPDIR=/var/tmp"       >> "$GITHUB_ENV"
-
-          # libguestfs bind-mounts the appliance's /etc/resolv.conf into the
-          # guest, and passt forwards those lookups to whatever the host resolver
-          # is. On the hosted image that points at a systemd-resolved stub which
-          # is not actually listening, so every guest lookup dies with
-          # "Temporary failure resolving" and apt cannot locate any package.
-          # Point the host resolver at a real one for the duration of the job.
-          echo "--- host resolver before"
-          cat /etc/resolv.conf
-          sudo cp -a /etc/resolv.conf /etc/resolv.conf.orig 2>/dev/null || true
-          printf 'nameserver %s\nnameserver 119.29.29.29\n' "${{ env.DNS }}" \
-            | sudo tee /etc/resolv.conf > /dev/null
-          echo "--- host resolver after"
-          cat /etc/resolv.conf
-          getent hosts mirrors.cernet.edu.cn || echo "::warning::host still cannot resolve the mirror"
-
-          echo "--- acceleration"
-          ls -l /dev/kvm 2>&1 || echo "(absent: libguestfs falls back to TCG, slower but works)"
-
-      - name: Preflight libguestfs appliance
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        run: |
-          set -euo pipefail
-          # Boot the appliance once up front, with networking on so passt is
-          # exercised too. If this passes, the only remaining variable in
-          # virt-customize is the guest itself.
-          libguestfs-test-tool --network
-
       - name: Download cloud image
         if: contains(github.event.inputs.OS, 'ubuntu')
         env:
@@ -259,20 +197,16 @@ jobs:
           url="https://cloud-images.ubuntu.com/releases/${VER}/release/${img}"
           echo "downloading ${url}"
           wget -q -c -O "$img" "$url"
-          echo "### image as shipped"
-          qemu-img info "$img"
-          qemu-img resize "$img" 20G
-          echo "### image after resize"
-          qemu-img info "$img"
+          ls -lh "$img"
           echo "IMG=${img}" >> "$GITHUB_ENV"
 
       - name: Stage guest customization files
         if: contains(github.event.inputs.OS, 'ubuntu')
         env:
-          VER: ${{ steps.ubuntu.outputs.ver }}
           CODENAME: ${{ steps.ubuntu.outputs.codename }}
         run: |
           set -euo pipefail
+          rm -rf guest
           mkdir -p guest
 
           # CERNET mirror (https://help.mirrors.cernet.edu.cn/). It 302-redirects to
@@ -289,7 +223,6 @@ jobs:
           cat > guest/99-homelab.cfg <<'EOF'
           # keep static /etc/hosts; keep our sources.list when apt runs
           apt_preserve_sources_list: true
-          # let the vagrant user reach the host: leave disable_root alone
           preserve_hostname: false
           manage_etc_hosts: false
           datasource_list: [ ConfigDrive, NoCloud ]
@@ -300,16 +233,8 @@ jobs:
           PasswordAuthentication yes
           EOF
 
-          # passt gives the appliance a DNS proxy at 169.254.2.2 but does not
-          # always forward it, so apt inside the guest fails with
-          # "Temporary failure resolving". The guest /etc/resolv.conf is NOT the
-          # lever here: libguestfs bind-mounts the appliance copy over it, and
-          # writing the guest file from a run-command lands nowhere. The resolver
-          # the appliance uses comes from the host, so the Install image build
-          # tools step repoints the host resolver instead.
-
-          # Repo-backed runtime that has no first-class Ubuntu package:
-          # containerd/runc/nerdctl (Docker repo) and kubeadm/kubelet/kubectl (k8s repo).
+          # Repos that have no first-class Ubuntu package: containerd/runc
+          # (Docker repo) and kubeadm/kubelet/kubectl (kubernetes repo).
           cat > guest/setup-container-runtime.sh <<'EOF'
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -340,80 +265,89 @@ jobs:
 
           echo "--- guest/sources.list"
           cat guest/sources.list
-          echo "--- staged files"
           ls -l guest/
 
-      - name: Customize image with virt-customize
-        if: contains(github.event.inputs.OS, 'ubuntu')
-        env:
-          VER: ${{ steps.ubuntu.outputs.ver }}
-          CODENAME: ${{ steps.ubuntu.outputs.codename }}
-        run: |
-          set -euo pipefail
-          virt-customize \
-            -a "${IMG}" \
-            --hostname "ubuntu-${VER}-tpl" \
-            --timezone Asia/Shanghai \
-            --upload guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
-            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur /etc/resolv.conf' \
-            --upload guest/sources.list:/etc/apt/sources.list \
-            --upload guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
-            --upload guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
-            --run-command 'true' \
-            --run-command 'apt-get update -qq' \
-            --install vim --install wget --install telnet --install qemu-guest-agent \
-            --install curl --install ca-certificates --install gnupg --install lsb-release \
-            --install apt-transport-https --install jq --install git --install iproute2 \
-            --run-command 'bash /root/setup-container-runtime.sh' \
-            --run-command 'apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb' \
-            --run-command 'rm -f /root/setup-container-runtime.sh && truncate -s 0 /var/log/apt/* 2>/dev/null || true' \
-            --run-command 'cloud-init clean --logs --seed && rm -f /etc/machine-id && : > /etc/machine-id'
-
-          echo "### customized image"
-          qemu-img info "${IMG}"
-          virt-filesystems -a "${IMG}"
-
-      - name: Register template on PVE
+      - name: Build template on PVE
         if: contains(github.event.inputs.OS, 'ubuntu')
         env:
           VM_ID: ${{ steps.ubuntu.outputs.vm_id }}
           VER: ${{ steps.ubuntu.outputs.ver }}
+          CODENAME: ${{ steps.ubuntu.outputs.codename }}
         run: |
           set -euo pipefail
           pve="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
           ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           img_name="$(basename "${IMG}")"
 
-          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}" "root@${pve}:/root/"
+          # Customization runs on PVE, not on the runner. PVE has real KVM and
+          # working DNS; inside a libguestfs appliance on a GitHub-hosted runner
+          # the guest could not resolve anything at all, because passt never
+          # forwarded DNS in that sandbox, so no package could be installed.
+          # Only the pristine image crosses the network now, not a 2GB built one.
+          cat > build_ubuntu_tpl.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          # Builds an Ubuntu PVE template from a cloud image already on PVE.
+          set -euxo pipefail
 
-          ssh ${ssh_opts} "root@${pve}" 'bash -s' <<EOF
-            set -euxo pipefail
-            VM_ID=${VM_ID}
-            STORAGE=${STORAGE}
-            CIDR=${CIDR}
-            DNS=${DNS}
+          : "${VM_ID:?}" "${VER:?}" "${CODENAME:?}" "${STORAGE:?}" "${CIDR:?}" "${DNS:?}" "${IMG_NAME:?}"
 
-            qm shutdown \$VM_ID --forceStop 2>/dev/null || true
-            qm destroy  \$VM_ID --purge       2>/dev/null || true
+          WORK=/root/tpl-build
+          mkdir -p "$WORK"
+          IMG="$WORK/$IMG_NAME"
 
-            qm create \$VM_ID --core 2 --memory 4096 --name ubuntu${VER}tpl --net0 virtio,bridge=vmbr1
-            qm importdisk \$VM_ID /root/${img_name} \$STORAGE
-            qm set \$VM_ID --scsihw virtio-scsi-pci --scsi0 \$STORAGE:vm-\$VM_ID-disk-0
-            qm disk resize \$VM_ID scsi0 20G
-            qm set \$VM_ID --tags "template;ubuntu${VER}"
-            qm set \$VM_ID --ide2 \$STORAGE:cloudinit
-            qm set \$VM_ID --boot cdn --bootdisk scsi0
-            qm set \$VM_ID --serial0 socket --vga serial0
-            qm set \$VM_ID --agent 1
-            qm set \$VM_ID --ipconfig0 ip=\$CIDR.250/24,gw=\$CIDR.1
-            qm set \$VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 1
-            qm set \$VM_ID --nameserver \$DNS --searchdomain example.com
-            qm set \$VM_ID --sshkey /root/.ssh/id_rsa.pub
-            qm template \$VM_ID
-          EOF
+          if ! command -v virt-customize >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq libguestfs-tools qemu-utils
+          fi
 
-          ssh ${ssh_opts} "root@${pve}" "qm config ${VM_ID}"
+          echo "=== virt-customize"
+          qemu-img resize "$IMG" 20G
+          virt-customize \
+            -a "$IMG" \
+            --hostname "ubuntu-${VER}-tpl" \
+            --timezone Asia/Shanghai \
+            --upload "$WORK/guest/setup-container-runtime.sh:/root/setup-container-runtime.sh" \
+            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
+            --upload "$WORK/guest/sources.list:/etc/apt/sources.list" \
+            --upload "$WORK/guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg" \
+            --upload "$WORK/guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf" \
+            --run-command 'apt-get update' \
+            --install vim --install wget --install telnet --install qemu-guest-agent \
+            --install curl --install ca-certificates --install gnupg --install jq \
+            --install git --install iproute2 \
+            --run-command 'bash /root/setup-container-runtime.sh' \
+            --run-command 'apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb' \
+            --run-command 'rm -f /root/setup-container-runtime.sh' \
+            --run-command 'cloud-init clean --logs --seed && rm -f /etc/machine-id && : > /etc/machine-id'
 
+          echo "=== register template ${VM_ID}"
+          qm shutdown "$VM_ID" --forceStop 2>/dev/null || true
+          qm destroy  "$VM_ID" --purge       2>/dev/null || true
+
+          qm create "$VM_ID" --core 2 --memory 4096 --name "ubuntu${VER}tpl" --net0 virtio,bridge=vmbr1
+          qm importdisk "$VM_ID" "$IMG" "$STORAGE"
+          qm set "$VM_ID" --scsihw virtio-scsi-pci --scsi0 "$STORAGE:vm-${VM_ID}-disk-0"
+          qm disk resize "$VM_ID" scsi0 20G
+          qm set "$VM_ID" --tags "template;ubuntu${VER}"
+          qm set "$VM_ID" --ide2 "$STORAGE:cloudinit"
+          qm set "$VM_ID" --boot cdn --bootdisk scsi0
+          qm set "$VM_ID" --serial0 socket --vga serial0
+          qm set "$VM_ID" --agent 1
+          qm set "$VM_ID" --ipconfig0 "ip=${CIDR}.250/24,gw=${CIDR}.1"
+          qm set "$VM_ID" --cipassword vagrant --ciuser vagrant --ciupgrade 1
+          qm set "$VM_ID" --nameserver "$DNS" --searchdomain example.com
+          qm set "$VM_ID" --sshkey /root/.ssh/id_rsa.pub
+          qm template "$VM_ID"
+
+          qm config "$VM_ID"
+          SCRIPT
+
+          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}"     "root@${pve}:/root/tpl-build/"
+          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace guest/     "root@${pve}:/root/tpl-build/guest/"
+          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace build_ubuntu_tpl.sh "root@${pve}:/root/"
+
+          ssh ${ssh_opts} "root@${pve}" \
+            "VM_ID=${VM_ID} VER=${VER} CODENAME=${CODENAME} STORAGE=${STORAGE} CIDR=${CIDR} DNS=${DNS} IMG_NAME=${img_name} bash /root/build_ubuntu_tpl.sh"
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
         run: |
