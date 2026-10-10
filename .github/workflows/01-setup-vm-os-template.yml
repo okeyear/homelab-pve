@@ -331,11 +331,11 @@ jobs:
             -a "${IMG}" \
             --hostname "ubuntu-${VER}-tpl" \
             --timezone Asia/Shanghai \
+            --copy-in guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
+            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
             --copy-in guest/sources.list:/etc/apt/sources.list \
             --copy-in guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
             --copy-in guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
-            --copy-in guest/setup-container-runtime.sh:/root/setup-container-runtime.sh \
-            --run-command 'rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
             --run-command 'apt-get update -qq' \
             --install vim --install wget --install telnet --install qemu-guest-agent \
             --install curl --install ca-certificates --install gnupg --install lsb-release \
