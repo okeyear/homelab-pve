@@ -349,6 +349,9 @@ jobs:
             exit 1
           fi
           echo "root partition: $part"
+          # Cloud images ship the ext4 with a dirty flag, and resize2fs refuses
+          # to touch it until fsck has run.
+          sudo e2fsck -f -y "$part" || echo "::warning::e2fsck returned $?"
           sudo resize2fs "$part"
           sudo lsblk -lno NAME,SIZE,FSTYPE "$dev"
 
@@ -375,7 +378,7 @@ jobs:
           sudo chroot "$mnt" /bin/bash /root/setup.sh "ubuntu-${{ steps.ubuntu.outputs.ver }}-tpl"
 
           echo "=== packages installed in the guest"
-          sudo chroot "$mnt" dpkg -l containerd.io kubelet qemu-guest-agent 2>/dev/null | tail -5 || true
+          sudo chroot "$mnt" dpkg -l qemu-guest-agent curl jq 2>/dev/null | tail -5 || true
 
           cleanup
           trap - EXIT
