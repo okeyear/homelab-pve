@@ -285,6 +285,16 @@ jobs:
           PasswordAuthentication yes
           EOF
 
+          # passt gives the appliance a DNS proxy at 169.254.2.2 but does not
+          # always forward it, so apt inside the guest fails with
+          # "Temporary failure resolving". Pin a resolver instead. Same DNS the
+          # template gets later via `qm set --nameserver`, and cloud-init will not
+          # clobber it because 99-homelab.cfg sets manage_etc_hosts: false.
+          cat > guest/resolv.conf <<EOF
+          nameserver ${DNS}
+          nameserver 119.29.29.29
+          EOF
+
           # Repo-backed runtime that has no first-class Ubuntu package:
           # containerd/runc/nerdctl (Docker repo) and kubeadm/kubelet/kubectl (k8s repo).
           cat > guest/setup-container-runtime.sh <<'EOF'
@@ -336,6 +346,8 @@ jobs:
             --upload guest/sources.list:/etc/apt/sources.list \
             --upload guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
             --upload guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
+            --upload guest/resolv.conf:/etc/resolv.conf \
+            --run-command 'cat /etc/resolv.conf; getent hosts mirrors.cernet.edu.cn || true' \
             --run-command 'apt-get update -qq' \
             --install vim --install wget --install telnet --install qemu-guest-agent \
             --install curl --install ca-certificates --install gnupg --install lsb-release \
