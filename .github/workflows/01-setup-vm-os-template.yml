@@ -211,8 +211,8 @@ jobs:
 
           # CERNET mirror (https://help.mirrors.cernet.edu.cn/). It 302-redirects to
           # a per-campus backend and load-balances across them. Replace sources.list
-          # wholesale so the distro default never has to be parsed, then the deb822
-          # file is removed separately because 24.04+ ships that instead.
+          # wholesale so the distro default never has to be parsed; the deb822 file
+          # is dropped separately because 24.04+ ships that instead.
           cat > guest/sources.list <<EOF
           deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse
           deb https://mirrors.cernet.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
@@ -233,8 +233,8 @@ jobs:
           PasswordAuthentication yes
           EOF
 
-          # Repos that have no first-class Ubuntu package: containerd/runc
-          # (Docker repo) and kubeadm/kubelet/kubectl (kubernetes repo).
+          # Repos that have no first-class Ubuntu package: containerd/runc from
+          # the Docker repo, kubeadm/kubelet/kubectl from the kubernetes repo.
           cat > guest/setup-container-runtime.sh <<'EOF'
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -263,64 +263,125 @@ jobs:
           apt-mark hold containerd.io runc kubelet kubeadm kubectl cri-tools kubernetes-cni
           EOF
 
+          # Runs inside the chroot. argv1 is the hostname.
+          cat > guest/setup.sh <<'EOF'
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          echo "$1" > /etc/hostname
+
+          apt-get update
+          apt-get install -y vim wget telnet qemu-guest-agent curl ca-certificates \
+                             gnupg jq git iproute2
+
+          bash /root/setup-container-runtime.sh
+
+          apt-get clean
+          rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+          rm -f /root/setup-container-runtime.sh /root/setup.sh
+
+          cloud-init clean --logs --seed
+          : > /etc/machine-id
+          EOF
+
           echo "--- guest/sources.list"
           cat guest/sources.list
           ls -l guest/
 
-      - name: Build template on PVE
+      - name: Customize image offline
+        if: contains(github.event.inputs.OS, 'ubuntu')
+        env:
+          VER: ${{ steps.ubuntu.outputs.ver }}
+        run: |
+          set -euo pipefail
+          # The image is customized through a chroot on the runner rather than
+          # with virt-customize. virt-customize needs a libguestfs appliance, and
+          # inside one on a hosted runner the guest cannot resolve anything:
+          # passt never forwards DNS in that sandbox and libguestfs overlays the
+          # appliance resolv.conf onto the guest's, so not even apt works.
+          # Running on PVE instead is blocked by pve-apt-hook, which refuses
+          # any transaction that would replace pve-qemu-kvm.
+          # qemu-nbd + chroot is the same operation without that appliance layer,
+          # and the runner's own network and resolver are known to work.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils
+
+          img="${IMG}"
+          dev=/dev/nbd0
+          mnt=/mnt/tpl-build
+
+          cleanup() {
+            sudo umount -R "$mnt"     2>/dev/null || true
+            sudo qemu-nbd --disconnect "$dev" 2>/dev/null || true
+            sudo rmdir "$mnt"         2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo qemu-img resize "$img" 20G
+          sudo modprobe nbd max_part=16
+          sudo mkdir -p "$mnt"
+          sudo qemu-nbd --connect="$dev" --format=qcow2 "$img"
+
+          part=$(sudo lsblk -lnpo NAME,FSTYPE "$dev" | awk '$2 ~ /ext4|xfs|btrfs/ {print $1; exit}')
+          if [ -z "$part" ]; then
+            sudo partprobe "$dev" || true
+            sleep 3
+            part=$(sudo lsblk -lnpo NAME,FSTYPE "$dev" | awk '$2 ~ /ext4|xfs|btrfs/ {print $1; exit}')
+          fi
+          if [ -z "$part" ]; then
+            echo "::error::no root filesystem found on ${dev}"
+            sudo lsblk -lno NAME,SIZE,FSTYPE,MOUNTPOINT "$dev" || true
+            exit 1
+          fi
+          echo "root partition: $part"
+
+          sudo mount "$part" "$mnt"
+          sudo mount --bind /dev        "$mnt/dev"
+          sudo mount --bind /dev/pts    "$mnt/dev/pts"
+          sudo mount -t proc proc       "$mnt/proc"
+          sudo mount --bind /sys        "$mnt/sys"
+
+          sudo mkdir -p "$mnt/etc/cloud/cloud.cfg.d" "$mnt/etc/ssh/sshd_config.d" "$mnt/root"
+          printf 'nameserver %s\nnameserver 119.29.29.29\n' "${{ env.DNS }}" \
+            | sudo tee "$mnt/etc/resolv.conf" > /dev/null
+          sudo rm -f "$mnt/etc/apt/sources.list.d/ubuntu.sources" "$mnt/etc/apt/sources.list.d/ubuntu.sources.cur"
+          sudo cp guest/sources.list              "$mnt/etc/apt/sources.list"
+          sudo cp guest/99-homelab.cfg            "$mnt/etc/cloud/cloud.cfg.d/99-homelab.cfg"
+          sudo cp guest/01-permitrootlogin.conf   "$mnt/etc/ssh/sshd_config.d/01-permitrootlogin.conf"
+          sudo cp guest/setup.sh                  "$mnt/root/setup.sh"
+          sudo cp guest/setup-container-runtime.sh "$mnt/root/setup-container-runtime.sh"
+
+          sudo chroot "$mnt" /bin/bash /root/setup.sh "ubuntu-${{ steps.ubuntu.outputs.ver }}-tpl"
+
+          echo "=== packages installed in the guest"
+          sudo chroot "$mnt" dpkg -l containerd.io kubelet qemu-guest-agent 2>/dev/null | tail -5 || true
+
+          cleanup
+          trap - EXIT
+          sudo qemu-img info "$img"
+
+      - name: Register template on PVE
         if: contains(github.event.inputs.OS, 'ubuntu')
         env:
           VM_ID: ${{ steps.ubuntu.outputs.vm_id }}
           VER: ${{ steps.ubuntu.outputs.ver }}
-          CODENAME: ${{ steps.ubuntu.outputs.codename }}
         run: |
           set -euo pipefail
           pve="${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}"
           ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           img_name="$(basename "${IMG}")"
 
-          # Customization runs on PVE, not on the runner. PVE has real KVM and
-          # working DNS; inside a libguestfs appliance on a GitHub-hosted runner
-          # the guest could not resolve anything at all, because passt never
-          # forwarded DNS in that sandbox, so no package could be installed.
-          # Only the pristine image crosses the network now, not a 2GB built one.
-          cat > build_ubuntu_tpl.sh <<'SCRIPT'
+          # Only the finished image and the qm calls cross to PVE. Nothing is
+          # installed there: pve-apt-hook refuses any apt transaction that would
+          # replace pve-qemu-kvm, so PVE keeps its own package set untouched.
+          cat > register_template.sh <<'SCRIPT'
           #!/usr/bin/env bash
-          # Builds an Ubuntu PVE template from a cloud image already on PVE.
           set -euxo pipefail
+          : "${VM_ID:?}" "${VER:?}" "${STORAGE:?}" "${CIDR:?}" "${DNS:?}" "${IMG_NAME:?}"
 
-          : "${VM_ID:?}" "${VER:?}" "${CODENAME:?}" "${STORAGE:?}" "${CIDR:?}" "${DNS:?}" "${IMG_NAME:?}"
+          IMG="/root/${IMG_NAME}"
 
-          WORK=/root/tpl-build
-          mkdir -p "$WORK"
-          IMG="$WORK/$IMG_NAME"
-
-          if ! command -v virt-customize >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y -qq libguestfs-tools qemu-utils
-          fi
-
-          echo "=== virt-customize"
-          qemu-img resize "$IMG" 20G
-          virt-customize \
-            -a "$IMG" \
-            --hostname "ubuntu-${VER}-tpl" \
-            --timezone Asia/Shanghai \
-            --upload "$WORK/guest/setup-container-runtime.sh:/root/setup-container-runtime.sh" \
-            --run-command 'rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur' \
-            --upload "$WORK/guest/sources.list:/etc/apt/sources.list" \
-            --upload "$WORK/guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg" \
-            --upload "$WORK/guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf" \
-            --run-command 'apt-get update' \
-            --install vim --install wget --install telnet --install qemu-guest-agent \
-            --install curl --install ca-certificates --install gnupg --install jq \
-            --install git --install iproute2 \
-            --run-command 'bash /root/setup-container-runtime.sh' \
-            --run-command 'apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb' \
-            --run-command 'rm -f /root/setup-container-runtime.sh' \
-            --run-command 'cloud-init clean --logs --seed && rm -f /etc/machine-id && : > /etc/machine-id'
-
-          echo "=== register template ${VM_ID}"
           qm shutdown "$VM_ID" --forceStop 2>/dev/null || true
           qm destroy  "$VM_ID" --purge       2>/dev/null || true
 
@@ -342,12 +403,10 @@ jobs:
           qm config "$VM_ID"
           SCRIPT
 
-          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}"     "root@${pve}:/root/tpl-build/"
-          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace guest/     "root@${pve}:/root/tpl-build/guest/"
-          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace build_ubuntu_tpl.sh "root@${pve}:/root/"
+          rsync -e "ssh ${ssh_opts}" -avz --partial --progress --inplace "${IMG}" register_template.sh "root@${pve}:/root/"
 
           ssh ${ssh_opts} "root@${pve}" \
-            "VM_ID=${VM_ID} VER=${VER} CODENAME=${CODENAME} STORAGE=${STORAGE} CIDR=${CIDR} DNS=${DNS} IMG_NAME=${img_name} bash /root/build_ubuntu_tpl.sh"
+            "VM_ID=${VM_ID} VER=${VER} STORAGE=${STORAGE} CIDR=${CIDR} DNS=${DNS} IMG_NAME=${img_name} bash /root/register_template.sh"
       - name: Setup AlmaLinux script
         if: contains(github.event.inputs.OS, 'almalinux')
         run: |
