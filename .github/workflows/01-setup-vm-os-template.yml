@@ -222,6 +222,21 @@ jobs:
           echo "XDG_RUNTIME_DIR=/tmp" >> "$GITHUB_ENV"
           echo "TMPDIR=/var/tmp"       >> "$GITHUB_ENV"
 
+          # libguestfs bind-mounts the appliance's /etc/resolv.conf into the
+          # guest, and passt forwards those lookups to whatever the host resolver
+          # is. On the hosted image that points at a systemd-resolved stub which
+          # is not actually listening, so every guest lookup dies with
+          # "Temporary failure resolving" and apt cannot locate any package.
+          # Point the host resolver at a real one for the duration of the job.
+          echo "--- host resolver before"
+          cat /etc/resolv.conf
+          sudo cp -a /etc/resolv.conf /etc/resolv.conf.orig 2>/dev/null || true
+          printf 'nameserver %s\nnameserver 119.29.29.29\n' "${{ env.DNS }}" \
+            | sudo tee /etc/resolv.conf > /dev/null
+          echo "--- host resolver after"
+          cat /etc/resolv.conf
+          getent hosts mirrors.cernet.edu.cn || echo "::warning::host still cannot resolve the mirror"
+
           echo "--- acceleration"
           ls -l /dev/kvm 2>&1 || echo "(absent: libguestfs falls back to TCG, slower but works)"
 
@@ -287,12 +302,11 @@ jobs:
 
           # passt gives the appliance a DNS proxy at 169.254.2.2 but does not
           # always forward it, so apt inside the guest fails with
-          # "Temporary failure resolving". The guest resolv.conf is written by a
-          # run-command instead of --upload: the image ships it as a dangling
-          # symlink and upload() uses open(O_CREAT), which follows symlinks and
-          # so cannot replace one. Same DNS the template gets later via
-          # `qm set --nameserver`, and cloud-init will not clobber it because
-          # 99-homelab.cfg sets manage_etc_hosts: false.
+          # "Temporary failure resolving". The guest /etc/resolv.conf is NOT the
+          # lever here: libguestfs bind-mounts the appliance copy over it, and
+          # writing the guest file from a run-command lands nowhere. The resolver
+          # the appliance uses comes from the host, so the Install image build
+          # tools step repoints the host resolver instead.
 
           # Repo-backed runtime that has no first-class Ubuntu package:
           # containerd/runc/nerdctl (Docker repo) and kubeadm/kubelet/kubectl (k8s repo).
@@ -345,8 +359,7 @@ jobs:
             --upload guest/sources.list:/etc/apt/sources.list \
             --upload guest/99-homelab.cfg:/etc/cloud/cloud.cfg.d/99-homelab.cfg \
             --upload guest/01-permitrootlogin.conf:/etc/ssh/sshd_config.d/01-permitrootlogin.conf \
-            --run-command 'printf "nameserver ${{ env.DNS }}\nnameserver 119.29.29.29\n" > /etc/resolv.conf' \
-            --run-command 'cat /etc/resolv.conf; getent hosts mirrors.cernet.edu.cn || true' \
+            --run-command 'true' \
             --run-command 'apt-get update -qq' \
             --install vim --install wget --install telnet --install qemu-guest-agent \
             --install curl --install ca-certificates --install gnupg --install lsb-release \
