@@ -207,6 +207,11 @@ jobs:
           cat > setup_ubuntu.sh <<'EOF'
           #!/bin/bash
           # Runs inside the guest. Everything here is plain distro tooling.
+          # cloud-init logs us in as vagrant, and this script rewrites system
+          # files, so re-exec as root first rather than prefixing every command.
+          if [ "$(id -u)" -ne 0 ]; then
+            exec sudo -E bash "$0" "$@"
+          fi
           set -eux
           export DEBIAN_FRONTEND=noninteractive
 
@@ -278,6 +283,8 @@ jobs:
           # bash /root/setup-container-runtime.sh
 
           systemctl enable qemu-guest-agent
+
+          echo "=== guest setup finished ==="
 
           # --- cleanup -----------------------------------------------------------
           apt-get clean
