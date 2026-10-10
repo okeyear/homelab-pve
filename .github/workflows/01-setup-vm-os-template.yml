@@ -191,16 +191,40 @@ jobs:
           MIRROR="https://mirrors.cernet.edu.cn/ubuntu/"
 
           # --- apt sources -------------------------------------------------------
-          # 24.04+ ship a deb822 file at /etc/apt/sources.list.d/ubuntu.sources and
-          # have no /etc/apt/sources.list at all, so removing that one file and
-          # writing our own sources.list is what covers every release.
-          rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur
-          cat > /etc/apt/sources.list <<MIRRORS
+          # Ubuntu 24.04 and newer ship a deb822 file and have no
+          # /etc/apt/sources.list at all; 22.04 and older use the classic
+          # one-line-per-suite format. Write whichever one the release expects
+          # and drop the other, so apt never sees a stale source.
+          # NB: the major version has to be extracted in its own step. Writing
+          # it as ${VERSION_ID%%.*:-0} makes bash read ":-0" as part of the
+          # pattern instead of a default, so it returns "24.04" unchanged and
+          # the integer comparison then fails.
+          ver_id="${VERSION_ID:-0}"
+          ver_major="${ver_id%%.*}"
+          case "$ver_major" in
+            ''|*[!0-9]*) ver_major=0 ;;
+          esac
+
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ] ||
+             [ "$ver_major" -ge 24 ]; then
+            rm -f /etc/apt/sources.list
+            cat > /etc/apt/sources.list.d/ubuntu.sources <<MIRRORS
+          Types: deb
+          URIs: ${MIRROR}
+          Suites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-backports ${CODENAME}-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          MIRRORS
+            rm -f /etc/apt/sources.list.d/ubuntu.sources.cur
+          else
+            cat > /etc/apt/sources.list <<MIRRORS
           deb ${MIRROR} ${CODENAME} main restricted universe multiverse
           deb ${MIRROR} ${CODENAME}-updates main restricted universe multiverse
           deb ${MIRROR} ${CODENAME}-backports main restricted universe multiverse
           deb ${MIRROR} ${CODENAME}-security main restricted universe multiverse
           MIRRORS
+            rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.cur
+          fi
 
           # --- sshd --------------------------------------------------------------
           # A drop-in, not a sed over sshd_config.d/*.conf: when that directory
@@ -301,10 +325,29 @@ jobs:
           qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0   # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           # qm set $VM_ID --ssh-pwauth 1
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
-          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent     
-          
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+
           qm start $VM_ID
-          sleep 45
+
+          # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep 45:
+          # 启动快的时候白等,启动慢的时候又连不上。
+          guest_ip="${CIDR}.250"
+          ssh-keygen -f "/root/.ssh/known_hosts" -R "$guest_ip" >/dev/null 2>&1 || true
+          ready=0
+          for i in $(seq 1 60); do
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -o ConnectTimeout=5 -o BatchMode=yes \
+                   "vagrant@$guest_ip" true 2>/dev/null; then
+              echo "guest ssh ready after $((i * 5))s"
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::guest ${guest_ip} did not become reachable over ssh"
+            exit 1
+          fi
 
           # 访问
           ssh-keygen -f "/root/.ssh/known_hosts" -R "${CIDR}.250"
