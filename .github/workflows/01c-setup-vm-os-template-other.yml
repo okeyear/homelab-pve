@@ -244,7 +244,12 @@ jobs:
           wget -c https://mirrors.cernet.edu.cn/openeuler/openEuler-${OE_RELEASE}/virtual_machine_img/x86_64/openEuler-${OE_RELEASE}-x86_64.qcow2.xz
           # 上游/163 备份:
           # wget -c https://mirrors.163.com/openeuler/openEuler-${OE_RELEASE}/virtual_machine_img/x86_64/openEuler-${OE_RELEASE}-x86_64.qcow2.xz
-          xz -d openEuler-${OE_RELEASE}-x86_64.qcow2.xz
+          # -f, not plain -d: the decompressed image survives on the host between
+          # runs, and plain xz -d refuses to overwrite, so the second run died
+          # with "File exists" before it built anything. Every other distro here
+          # is idempotent because qm destroy --purge is the only cleanup; this
+          # one leaves a second artifact behind and has to cope with it.
+          xz -df openEuler-${OE_RELEASE}-x86_64.qcow2.xz
 
           VM_ID=$VM_ID
           qm shutdown ${VM_ID} --forceStop >/dev/null 2>&1 || true
