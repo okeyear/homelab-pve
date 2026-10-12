@@ -474,38 +474,38 @@ jobs:
           # standard cloud-init NoCloud instead -- which is exactly what PVE's
           # \`qm set --ide2 local-zfs:cloudinit\` provides. Same image on the OSS
           # bucket the mirror page links, so it needs no third party mirror.
-          wget -c https://alinux3.oss-cn-hangzhou.aliyuncs.com/\${ALINUX3_IMAGE}
+          wget -c https://alinux3.oss-cn-hangzhou.aliyuncs.com/${ALINUX3_IMAGE}
           # 老的镜像(20240819),需要回退时换这里:
           # wget -c https://alinux3.oss-cn-hangzhou.aliyuncs.com/aliyun_3_x64_20G_nocloud_alibase_20240819.qcow2
 
           VM_ID=$VM_ID
-          qm shutdown \${VM_ID} --forceStop >/dev/null 2>&1 || true
+          qm shutdown ${VM_ID} --forceStop >/dev/null 2>&1 || true
           sleep 2
-          qm destroy \${VM_ID} --purge >/dev/null 2>&1 || true
+          qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
 
-          qm create \$VM_ID --core 2 --memory 4096 --name alinux3tpl --net0 virtio,bridge=vmbr1
-          qm importdisk \$VM_ID \${ALINUX3_IMAGE} \${STORAGE}
+          qm create $VM_ID --core 2 --memory 4096 --name alinux3tpl --net0 virtio,bridge=vmbr1
+          qm importdisk $VM_ID ${ALINUX3_IMAGE} ${STORAGE}
           # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
-          # 适用于local-lvm \${STORAGE}:vm-\${VM_ID}-disk-0
-          qm set \$VM_ID --scsihw virtio-scsi-pci --scsi0 \${STORAGE}:vm-\${VM_ID}-disk-0
-          # 适用于local \${STORAGE}:\${VM_ID}/vm-\${VM_ID}-disk-0.raw
+          # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
 
-          qm set \$VM_ID --ide2 \${STORAGE}:cloudinit
-          qm set \$VM_ID --boot cdn --bootdisk scsi0
-          qm set \$VM_ID --serial0 socket --vga serial0
-          qm set \$VM_ID --tags "template;\${{ github.event.inputs.OS }}"
+          qm set $VM_ID --ide2 ${STORAGE}:cloudinit
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+          qm set $VM_ID --serial0 socket --vga serial0
+          qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
           # 设置磁盘 -- 仓库统一 20G,不是参考脚本里的 40G
-          qm disk resize \$VM_ID scsi0 20G
+          qm disk resize $VM_ID scsi0 20G
 
           # el9 需要设置 CPU 为 host。alinux3 是 EL8 兼容的,和 almalinux8 一样不设。
 
           # 导入ssh公钥到虚拟系统
-          qm set \$VM_ID --sshkey ~/.ssh/id_rsa.pub
-          qm set \$VM_ID --ipconfig0 ip=\${CIDR}.250/24,gw=\${CIDR}.1  # 设置ip
-          qm set \$VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  # 设置用户和密码。注意密码在设置之后，会自动隐藏。
-          qm set \$VM_ID --searchdomain example.com --nameserver \${DNS}
-          qm set \$VM_ID --agent 1 # 需要配合 qemu-guest-agent
-          qm start \$VM_ID
+          qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
+          qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
+          qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  # 设置用户和密码。注意密码在设置之后，会自动隐藏。
+          qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
+          qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+          qm start $VM_ID
 
           # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep:
           # 启动快的时候白等,启动慢的时候又连不上。
@@ -515,7 +515,7 @@ jobs:
           # subnet. Every shell variable below belongs to the PVE side and must keep
           # its backslash, or the runner splices an empty string in at generation
           # time. Keep this comment free of dollar signs and backticks.
-          guest_ip="\${CIDR}.250"
+          guest_ip="${CIDR}.250"
           ssh-keygen -f "/root/.ssh/known_hosts" -R "\$guest_ip" >/dev/null 2>&1 || true
           ready=0
           for i in \$(seq 1 60); do
