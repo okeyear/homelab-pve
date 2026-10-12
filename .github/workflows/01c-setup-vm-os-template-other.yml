@@ -513,6 +513,11 @@ jobs:
           # of this template inherits cicustom and needs to be able to read it.
           mkdir -p /var/lib/vz/snippets
           PUBKEY="\$(cat /root/.ssh/id_rsa.pub)"
+          if [ -z "\$PUBKEY" ]; then
+            echo "::error::could not read /root/.ssh/id_rsa.pub on PVE; the"
+            echo "::error::snippet would ship an empty ssh_authorized_keys"
+            exit 1
+          fi
           cat > /var/lib/vz/snippets/alinux3-user.yaml <<CI
           #cloud-config
           manage_etc_hosts: true
@@ -541,7 +546,13 @@ jobs:
           # Listed here as well as through --sshkey, so this snippet stands on its
           # own instead of depending on the meta-data path staying as it is.
           ssh_authorized_keys:
-            - "${PUBKEY}"
+            # The backslash is load-bearing. Without it the RUNNER expands this
+            # while generating the tpl script, PUBKEY does not exist there, and
+            # the snippet ships with `ssh_authorized_keys: [""]` -- which is what
+            # runs 3 through 5 did. PVE puts the key in the USER-data, not the
+            # meta-data, so --cicustom taking over the user-data takes the key
+            # with it and nothing is left to log in with.
+            - "\${PUBKEY}"
           CI
           qm set $VM_ID --cicustom "user=local:snippets/alinux3-user.yaml"
 
