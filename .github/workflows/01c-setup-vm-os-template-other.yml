@@ -17,7 +17,7 @@ on:
       runner:
         description: 'Github Action Runner/Agent'
         required: true
-        default: ubuntu-latest
+        default: self-hosted
         type: choice
         options:
           - ubuntu-latest
@@ -109,8 +109,16 @@ jobs:
 
           # shellcheck disable=SC1091
           . /etc/os-release
-          RELEASE="${VERSION_ID%%.*}"
           MIRROR="https://mirrors.cernet.edu.cn/openeuler"
+
+          # The tree is named after the release WITH the product prefix:
+          # openEuler-24.03-LTS, plus openEuler-24.03-LTS-SP1 .. -SP4 for the
+          # service packs. There is no bare "24-LTS" or "24.03-LTS" directory
+          # anywhere. The first run built "${VERSION_ID%%.*}-LTS", which cuts the
+          # point release and asked for 24-LTS, and every mirror 404'd on
+          # repomd.xml -- so take VERSION_ID whole instead of truncating it.
+          OE_TREE="openEuler-${VERSION_ID}-LTS"
+          echo "using openEuler tree ${MIRROR}/${OE_TREE}"
 
           # --- yum repos ----------------------------------------------------------
           # openEuler's tree is its own shape: everything/ carries the bulk,
@@ -139,34 +147,27 @@ jobs:
             GPGKEY="gpgkey=file:///etc/pki/rpm-gpg/$k"; break
           done
 
-          # The release is named by the RELEASE variable, not by the version the
-          # workflow input carries: 24.03-LTS is what the mirror directory is
-          # called, and VERSION_ID only says "24.03". Falling back to the input
-          # keeps this honest if os-release is ever unavailable.
-          OE_LTS="${OE_LTS:-${RELEASE}-LTS}"
-          echo "using openEuler tree ${MIRROR}/${OE_LTS}"
-
           # NOTE there is no "/os" suffix here -- openEuler puts repodata at the
           # top of the architecture directory. basearch keeps its backslash so it
           # survives this shell and is still expanded later by dnf.
           cat > /etc/yum.repos.d/99-homelab.repo <<REPO
           [everything]
-          name=openEuler ${OE_LTS} - everything
-          baseurl=${MIRROR}/${OE_LTS}/everything/\$basearch/
+          name=${OE_TREE} - everything
+          baseurl=${MIRROR}/${OE_TREE}/everything/\$basearch/
           ${GPGKEY}
           gpgcheck=1
           enabled=1
 
           [epol]
-          name=openEuler ${OE_LTS} - EPOL main
-          baseurl=${MIRROR}/${OE_LTS}/EPOL/main/\$basearch/
+          name=${OE_TREE} - EPOL main
+          baseurl=${MIRROR}/${OE_TREE}/EPOL/main/\$basearch/
           ${GPGKEY}
           gpgcheck=1
           enabled=1
 
           [update]
-          name=openEuler ${OE_LTS} - updates
-          baseurl=${MIRROR}/${OE_LTS}/update/\$basearch/
+          name=${OE_TREE} - updates
+          baseurl=${MIRROR}/${OE_TREE}/update/\$basearch/
           ${GPGKEY}
           gpgcheck=1
           enabled=1
