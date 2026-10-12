@@ -497,9 +497,42 @@ jobs:
           # 设置磁盘 -- 仓库统一 20G,不是参考脚本里的 40G
           qm disk resize $VM_ID scsi0 20G
 
+          # --- cloud-init user data ------------------------------------------------
+          # --cicustom REPLACES the user-data Proxmox generates, so this file has
+          # to carry the whole first-boot contract instead of patching it.
+          #
+          # Why it is needed: this image's cloud.cfg gives the cloud-init default
+          # user no groups and no sudoers entry, so the first run got as far as
+          # `guest ssh ready after 15s` and then died on
+          #   vagrant is not in the sudoers file.
+          # --ciuser cannot express group membership, and switching to --ciuser
+          # root is worse: cloud-init's own default is disable_root: true, which
+          # replaces root's authorized_keys with a "please log in as someone else"
+          # stub, so root-by-key stops working.
+          #
+          # `local` is the default directory storage and the only one guaranteed to
+          # carry the snippets content, so that is what the snippet path uses. The
+          # file stays on the host afterwards, which is what you want: every clone
+          # of this template inherits cicustom and needs to be able to read it.
+          mkdir -p /var/lib/vz/snippets
+          cat > /var/lib/vz/snippets/alinux3-user.yaml <<'CI'
+          #cloud-config
+          manage_etc_hosts: true
+          # The whole point of this file. A non-interactive ssh has no way to type
+          # a password, so password-required sudo is as good as no sudo at all.
+          sudo: "ALL=(ALL) NOPASSWD:ALL"
+          groups: [wheel]
+          disable_root: false
+          ssh_pwauth: true
+          CI
+          qm set $VM_ID --cicustom "user=local:snippets/alinux3-user.yaml"
+
           # el9 需要设置 CPU 为 host。alinux3 是 EL8 兼容的,和 almalinux8 一样不设。
 
-          # 导入ssh公钥到虚拟系统
+          # 导入ssh公钥到虚拟系统。--sshkey feeds meta-data, and --cicustom above
+          # replaces only the user-data, so the key still reaches the default
+          # user named in the snippet. That is the same path the first run used
+          # successfully -- the run only ever failed at sudo, not at login.
           qm set $VM_ID --sshkey ~/.ssh/id_rsa.pub
           qm set $VM_ID --ipconfig0 ip=${CIDR}.250/24,gw=${CIDR}.1  # 设置ip
           qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  # 设置用户和密码。注意密码在设置之后，会自动隐藏。
