@@ -484,18 +484,15 @@ jobs:
           qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
 
           qm create $VM_ID --core 2 --memory 4096 --name alinux3tpl --net0 virtio,bridge=vmbr1
-          qm importdisk $VM_ID ${ALINUX3_IMAGE} ${STORAGE}
-          # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
-          # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
-          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
-          # 适用于local ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
-
+          # NOTE the order here: everything that does NOT need the imported disk
+          # happens before qm importdisk, and the cloud-init seed is dumped in
+          # between. qm importdisk prints a progress bar for the whole 20 GiB and
+          # fills ~50KB of the run log on its own, so a dump placed after it lands
+          # past the point this network will let a log download reach. Placed here
+          # the same evidence is in the first few KB.
           qm set $VM_ID --ide2 ${STORAGE}:cloudinit
-          qm set $VM_ID --boot cdn --bootdisk scsi0
           qm set $VM_ID --serial0 socket --vga serial0
           qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
-          # 设置磁盘 -- 仓库统一 20G,不是参考脚本里的 40G
-          qm disk resize $VM_ID scsi0 20G
 
           # --- cloud-init user data ------------------------------------------------
           # --cicustom REPLACES the user-data Proxmox generates, so this file has
@@ -559,6 +556,25 @@ jobs:
           qm set $VM_ID --cipassword vagrant --ciuser vagrant --ciupgrade 0  # 设置用户和密码。注意密码在设置之后，会自动隐藏。
           qm set $VM_ID --searchdomain example.com --nameserver ${DNS}
           qm set $VM_ID --agent 1 # 需要配合 qemu-guest-agent
+
+          # ==== SEED DIAGNOSTIC (early, on purpose -- see the order note above) ====
+          echo "=== SEED: snippet as written on disk ==="
+          cat /var/lib/vz/snippets/alinux3-user.yaml
+          echo "=== SEED: user-data PVE will hand the guest ==="
+          qm cloudinit dump \$VM_ID user
+          echo "=== SEED: meta-data PVE will hand the guest ==="
+          qm cloudinit dump \$VM_ID meta
+          echo "=== SEED: end ==="
+
+          qm importdisk $VM_ID ${ALINUX3_IMAGE} ${STORAGE}
+          # 将新导入的磁盘以 scsi 驱动器的方式装载到新建的虚拟机的 scsi 控制器
+          # 适用于local-lvm ${STORAGE}:vm-${VM_ID}-disk-0
+          qm set $VM_ID --scsihw virtio-scsi-pci --scsi0 ${STORAGE}:vm-${VM_ID}-disk-0
+          # 适用于local ${STORAGE}:${VM_ID}/vm-${VM_ID}-disk-0.raw
+
+          qm set $VM_ID --boot cdn --bootdisk scsi0
+          # 设置磁盘 -- 仓库统一 20G,不是参考脚本里的 40G
+          qm disk resize $VM_ID scsi0 20G
           qm start $VM_ID
 
           # 等待 cloud-init 跑完、sshd 能连上,不要用固定的 sleep:
