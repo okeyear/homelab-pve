@@ -579,13 +579,15 @@ jobs:
           # shellcheck disable=SC1091
           . /etc/os-release
           RELEASE="${VERSION_ID%%.*}"
-          MIRROR="https://mirror.stream.centos.org"
+          MIRROR="https://mirrors.cernet.edu.cn/centos-stream"
 
           # --- yum repos ----------------------------------------------------------
-          # No Chinese mirror carries CentOS Stream 9/10. CERNET, aliyun, tencent,
-          # huawei, ustc and nju all return 404 for 9-stream, and the two that do
-          # carry a stream tree stop at 8-stream. Upstream is the only source, so
-          # this is the one guest script here that does not use CERNET.
+          # CERNET DOES carry CentOS Stream -- an earlier note in this file claimed
+          # it did not, and it does: 9-stream and 10-stream both resolve under
+          # mirrors.cernet.edu.cn/centos-stream with the same BaseOS / AppStream /
+          # CRB / $basearch/os/ layout as upstream. aliyun and ustc mirror the very
+          # same tree. So this script uses CERNET like every other one here, and
+          # measured from China it is ~3x faster than mirror.stream.centos.org.
           #
           # Stream has no `extras` tree at all -- the top level is AppStream,
           # BaseOS, CRB, HighAvailability, NFV, ResilientStorage, RT -- and CRB is
@@ -594,15 +596,31 @@ jobs:
           # point at mirrorlist.centos.org, and commenting the metalink out leaves
           # dnf with no baseurl at all.
           mkdir -p /etc/yum.repos.d
-          for repo in /etc/yum.repos.d/CentOS-Stream*.repo; do
-            [ -f "$repo" ] || continue
-            mv "$repo" "$repo.disabled"
+          # Disable every stock repo file whatever its name. A name-specific glob
+          # is what broke here: `CentOS-Stream*.repo` matched nothing on the
+          # GenericCloud image, so the stock baseos/appstream/crb definitions
+          # stayed live and the very first transaction died with
+          # "Repository baseos is listed more than once in the configuration".
+          find /etc/yum.repos.d -maxdepth 1 -type f -name '*.repo' \
+               ! -name '99-homelab.repo' \
+               -exec sh -c 'for f do mv -- "$f" "$f.disabled"; done' sh {} +
+
+          # Import every key the image already ships. Matching one fixed name is
+          # also what broke: the image calls it RPM-GPG-KEY-CentOS-Stream-* with a
+          # capital C and S, the lowercase glob missed it, GPGKEY came out empty,
+          # and dnf refused the transaction with "you do not have any GPG public
+          # keys installed" even though gpgcheck=1 was asking for exactly that.
+          for k in /etc/pki/rpm-gpg/*; do
+            [ -f "$k" ] || continue
+            rpm --import "$k" || true
           done
 
+          # gpgkey= is only an auto-import convenience; the keys are in the rpmdb
+          # now. Still name one if it can be found, case-insensitively, so dnf can
+          # re-import it later on its own.
           GPGKEY=''
-          for k in /etc/pki/rpm-gpg/RPM-GPG-KEY-centos-stream-*; do
-            [ -f "$k" ] || continue
-            GPGKEY="gpgkey=file://$k"; break
+          for k in $(ls -1 /etc/pki/rpm-gpg/ 2>/dev/null | grep -i 'centos.*stream' || true); do
+            GPGKEY="gpgkey=file:///etc/pki/rpm-gpg/$k"; break
           done
 
           # Directory names are CASE SENSITIVE: BaseOS, AppStream, CRB. basearch
