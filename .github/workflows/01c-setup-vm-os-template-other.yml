@@ -96,7 +96,14 @@ jobs:
           # under sudo, trace every command, end with a marker the PVE side can
           # grep for.
           if [ "$(id -u)" -ne 0 ]; then
-            exec sudo -E bash "$0" "$@"
+            # This image puts its default user in wheel but leaves the sudoers
+            # rule password-required, and a non-interactive ssh has no terminal
+            # to type one -- the first run died on "sudo: a terminal is
+            # required to read the password". Feed the same throwaway password
+            # the workflow already hands the VM with --cipassword; sudo ignores
+            # it when the rule is already NOPASSWD, which is why setup_alinux3.sh
+            # does the same thing.
+            exec sudo -S -p '' -E bash "$0" "$@" <<<'vagrant'
           fi
           set -eux
 
@@ -251,7 +258,12 @@ jobs:
           qm set $VM_ID --boot cdn --bootdisk scsi0
           qm set $VM_ID --serial0 socket --vga serial0
           qm set $VM_ID --tags "template;${{ github.event.inputs.OS }}"
-          qm disk resize $VM_ID scsi0 20G
+          # Unlike every other template here, this one cannot be 20G: the
+          # openEuler qcow2 already presents a 40G disk and `qm disk resize`
+          # refuses to shrink one ("shrinking disks is not supported"), so
+          # asking for 20G only prints that and changes nothing. 40G is also
+          # what the script this was modelled on asked for.
+          qm disk resize $VM_ID scsi0 40G
 
           # el9 需要设置 CPU 为 host,否则内核看不到宿主机的指令集
           qm set $VM_ID --cpu cputype=host
