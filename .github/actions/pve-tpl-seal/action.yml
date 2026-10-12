@@ -1,0 +1,40 @@
+name: "Seal the VM into a template"
+description: "Copy the generated scripts to PVE, run the PVE-side one, then shut the VM down and mark it as a template"
+
+inputs:
+  script-glob:
+    description: 'Local files to copy to PVE, e.g. setup_ubuntu*.sh'
+    required: true
+  tpl-script:
+    description: 'PVE-side script to execute, e.g. setup_ubuntu_tpl.sh'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Copy scripts to PVE
+      shell: bash
+      run: |
+        # copy scripts to PVE
+        # A glob that matches nothing stays literal and rsync then fails on the
+        # missing file, which is what we want: a silent no-op copy would leave
+        # PVE running a stale script from the previous run.
+        for pkg in ${{ inputs.script-glob }}
+        do
+          rsync -e  'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' \
+            -avz --partial --progress --inplace "$pkg" root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }}:/root/
+        done
+
+    - name: Exec template script on PVE
+      shell: bash
+      run: |
+        # `set -e` matters: with a plain `;` chain only the LAST command decides
+        # the exit status, so a script that dies mid-way still turns the step
+        # green as long as qm template succeeds.
+        # `qm shutdown --forceStop || qm stop --timeout 60 || true` is likewise
+        # deliberate -- `qm stop` has no --forceStop option, it just prints
+        # "Unknown option" and leaves the VM running, and then qm template
+        # refuses. The trailing `qm config` is the success evidence: without it
+        # a green step says nothing about whether a template actually exists.
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "set -e; bash ${{ inputs.tpl-script }}; sleep 5; qm shutdown $VM_ID --forceStop || qm stop $VM_ID --timeout 60 || true; sleep 10; qm set $VM_ID --ciupgrade 1; qm template $VM_ID; echo '=== template ready ==='; qm config $VM_ID"

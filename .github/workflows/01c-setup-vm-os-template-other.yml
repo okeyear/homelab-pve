@@ -1,0 +1,63 @@
+name: "[ 01c ] Setup VM template 其他"
+
+# 非 deb、非 RHEL 的发行版。alinux3 / openEuler2403 以前同样挂在
+# 01-setup-vm-os-template.yml 里,没有任何 step 会命中,选了等于什么都没做。
+# 这里保留选项,但立刻明确报错。
+#
+# 真正实现时照抄 01b 的骨架:
+#   1. 把这两个发行版从下面的报错里放出来
+#   2. Setup <distro> script     -- guest 里的 yum/dnf 部分可复用 01b
+#   3. Setup <distro> template   -- 换镜像地址和 VM ID(对照 02-create-vms.yml)
+#   4. 加 pve-tpl-seal,script-glob / tpl-script 指到新脚本
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Github Action Runner/Agent'
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - ubuntu-latest
+          - self-hosted
+
+      OS:
+        description: 'OS Version'
+        required: true
+        default: 'alinux3'
+        type: choice
+        options:
+          - alinux3
+          - openEuler2403
+
+      STORAGE:
+        description: 'Storage'
+        required: true
+        default: 'local-zfs'
+        type: choice
+        options:
+          - local-zfs
+          - local-lvm
+          - local
+env:
+  TAILSCALE_HOST: ${{ vars.TAILSCALE_HOST }}
+  TAILSCALE_NET: ${{ vars.TAILSCALE_NET }}
+  CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
+  DNS: 223.5.5.5
+  STORAGE:  ${{ github.event.inputs.STORAGE }} # 'local-lvm' 'local' 'local-zfs'
+
+jobs:
+  setup-template-other:
+    name: 🚀 Setup template ${{ github.event.inputs.OS }}
+    runs-on: ${{ github.event.inputs.runner }}
+    permissions:
+      id-token: write   # 让 GitHub 颁发 OIDC
+    steps:
+      - name: Not implemented
+        run: |
+          echo "::error::${{ github.event.inputs.OS }} has no template implementation yet."
+          echo "::error::Until then use 01a (deb 系) or 01b (RHEL 系)."
+          echo "::error::This option used to live in 01-setup-vm-os-template.yml, where no"
+          echo "::error::step matched it and the run finished green without building anything."
+          exit 1
