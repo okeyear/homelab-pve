@@ -584,10 +584,20 @@ jobs:
           done
           if [ "\$ready" -ne 1 ]; then
             echo "::error::guest \${guest_ip} did not become reachable over ssh"
-            echo "::error::first thing to check: does this nocloud image ship an ENABLED cloud-init?"
-            echo "::error::second: \${VM_ID} runs on --cicustom, which REPLACES the user-data; if"
-            echo "::error::that snippet lost its 'user:' line, cloud-init creates a different"
-            echo "::error::default account and ssh by key fails even though everything booted."
+            # Four dumps, because "the guest booted and nobody can log in" has
+            # already cost several runs on this image and none of them said why.
+            # qm cloudinit dump prints exactly what PVE puts on the NoCloud seed,
+            # so it distinguishes "my snippet is malformed" from "PVE never
+            # embedded it" without guessing.
+            echo "=== DIAG 1/4: qm config $VM_ID ==="
+            qm config \$VM_ID || true
+            echo "=== DIAG 2/4: snippet as written on disk ==="
+            cat /var/lib/vz/snippets/alinux3-user.yaml || true
+            echo "=== DIAG 3/4: user-data PVE will hand the guest ==="
+            qm cloudinit dump \$VM_ID user || true
+            echo "=== DIAG 4/4: meta-data PVE will hand the guest ==="
+            qm cloudinit dump \$VM_ID meta || true
+            echo "::error::see the four dumps above"
             exit 1
           fi
 
