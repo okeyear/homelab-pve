@@ -1,6 +1,24 @@
 name: "Bootstrap runner for PVE template builds"
 description: "Join the tailnet, trust the PVE host key, and install the runner-side tools every template workflow needs"
 
+# NOTE: everything the caller needs to pass in arrives as an input, even the
+# secrets. An action.yml manifest is parsed in a restricted template context
+# that has no `secrets`, so `${{ secrets.X }}` written directly in here fails
+# the run with "Unrecognized named-value: 'secrets'" before a single step runs.
+inputs:
+  ts-oauth-client-id:
+    description: 'secrets.TS_OAUTH_CLIENT_ID'
+    required: true
+  ts-oauth-secret:
+    description: 'secrets.TS_OAUTH_SECRET'
+    required: true
+  pve-host:
+    description: 'vars.TAILSCALE_HOST'
+    required: true
+  pve-net:
+    description: 'vars.TAILSCALE_NET'
+    required: true
+
 runs:
   using: composite
   steps:
@@ -8,8 +26,8 @@ runs:
     - name: Tailscale Connect
       uses: tailscale/github-action@v3
       with:
-        oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-        oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+        oauth-client-id: ${{ inputs.ts-oauth-client-id }}
+        oauth-secret:    ${{ inputs.ts-oauth-secret }}
         tags: tag:ci     # 与 ACL 中的 tag 保持一致
         version: latest # https://pkgs.tailscale.com/stable/#static
         use-cache: 'true'
@@ -22,8 +40,8 @@ runs:
         # sudo tailscale up --advertise-tags=tag:gh --accept-routes --hostname=${pveHost}
         # tailscale status
         test -d ~/.ssh || mkdir -p ~/.ssh
-        ssh-keyscan -H ${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} >> ~/.ssh/known_hosts
-        # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
+        ssh-keyscan -H ${{ inputs.pve-host }}.${{ inputs.pve-net }} >> ~/.ssh/known_hosts
+        # ssh root@${{ inputs.pve-host }}.${{ inputs.pve-net }} "qm list"
         # The Tailscale action installs its own package immediately before this step and
         # its apt/dpkg can still be running when we get here. Both apt-get update
         # and the install then die on a lock, and with -qq the error is swallowed

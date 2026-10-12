@@ -58,10 +58,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # secrets / vars must be passed IN: an action.yml manifest is parsed in a
+      # restricted context where `${{ secrets.X }}` fails the run outright.
       # 加 steps 之前先想一下它属于哪个家族 —— 共享的部分放在
       # .github/actions/ 里,不要在这里复制 Tailscale / rsync / qm 那几段。
       - name: Bootstrap runner
         uses: ./.github/actions/pve-tpl-bootstrap
+        with:
+          ts-oauth-client-id: ${{{{ secrets.TS_OAUTH_CLIENT_ID }}}}
+          ts-oauth-secret: ${{{{ secrets.TS_OAUTH_SECRET }}}}
+          pve-host: ${{{{ vars.TAILSCALE_HOST }}}}
+          pve-net: ${{{{ vars.TAILSCALE_NET }}}}
 
       - name: Setup Debian script
         if: contains(github.event.inputs.OS, 'debian')
@@ -276,6 +283,8 @@ jobs:
         with:
           script-glob: setup_debian*.sh
           tpl-script: setup_debian_tpl.sh
+          pve-host: ${{ vars.TAILSCALE_HOST }}
+          pve-net: ${{ vars.TAILSCALE_NET }}
 
       - name: Setup Ubuntu script
         # if: github.event.inputs.OS == 'ubuntu2404'
@@ -493,3 +502,5 @@ jobs:
         with:
           script-glob: setup_ubuntu*.sh
           tpl-script: setup_ubuntu_tpl.sh
+          pve-host: ${{ vars.TAILSCALE_HOST }}
+          pve-net: ${{ vars.TAILSCALE_NET }}
