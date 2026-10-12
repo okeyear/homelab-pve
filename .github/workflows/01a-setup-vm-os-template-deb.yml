@@ -65,10 +65,10 @@ jobs:
       - name: Bootstrap runner
         uses: ./.github/actions/pve-tpl-bootstrap
         with:
-          ts-oauth-client-id: ${{{{ secrets.TS_OAUTH_CLIENT_ID }}}}
-          ts-oauth-secret: ${{{{ secrets.TS_OAUTH_SECRET }}}}
-          pve-host: ${{{{ vars.TAILSCALE_HOST }}}}
-          pve-net: ${{{{ vars.TAILSCALE_NET }}}}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          pve-host: ${{ vars.TAILSCALE_HOST }}
+          pve-net: ${{ vars.TAILSCALE_NET }}
 
       - name: Setup Debian script
         if: contains(github.event.inputs.OS, 'debian')
