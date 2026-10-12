@@ -515,15 +515,36 @@ jobs:
           # file stays on the host afterwards, which is what you want: every clone
           # of this template inherits cicustom and needs to be able to read it.
           mkdir -p /var/lib/vz/snippets
-          cat > /var/lib/vz/snippets/alinux3-user.yaml <<'CI'
+          PUBKEY="\$(cat /root/.ssh/id_rsa.pub)"
+          cat > /var/lib/vz/snippets/alinux3-user.yaml <<CI
           #cloud-config
           manage_etc_hosts: true
-          # The whole point of this file. A non-interactive ssh has no way to type
-          # a password, so password-required sudo is as good as no sudo at all.
-          sudo: "ALL=(ALL) NOPASSWD:ALL"
-          groups: [wheel]
+          # Name the default user EXPLICITLY. Without this cloud-init falls back to
+          # the image's own default_user and never creates vagrant at all: PVE
+          # accepts --cicustom, then ssh simply never comes up, because the
+          # meta-data key landed on some other account. The user: line is also
+          # what PVE's generated user-data had, and losing it is the only
+          # difference between the run that logged in and this one.
+          user: vagrant
+          # cloud-init's own default is disable_root: true, which replaces root's
+          # authorized_keys with a "log in as someone else" stub.
           disable_root: false
           ssh_pwauth: true
+          # An explicit users list rather than top-level groups/sudo keys, so this
+          # does not depend on how the image's cloud.cfg merges them. This image's
+          # default_user has neither a group nor a sudo rule, which is what made
+          # the second run die on "vagrant is not in the sudoers file".
+          users:
+            - name: vagrant
+              gecos: homelab
+              groups: [wheel]
+              sudo: "ALL=(ALL) NOPASSWD:ALL"
+              shell: /bin/bash
+              lock_passwd: false
+          # Listed here as well as through --sshkey, so this snippet stands on its
+          # own instead of depending on the meta-data path staying as it is.
+          ssh_authorized_keys:
+            - "${PUBKEY}"
           CI
           qm set $VM_ID --cicustom "user=local:snippets/alinux3-user.yaml"
 
@@ -564,6 +585,9 @@ jobs:
           if [ "\$ready" -ne 1 ]; then
             echo "::error::guest \${guest_ip} did not become reachable over ssh"
             echo "::error::first thing to check: does this nocloud image ship an ENABLED cloud-init?"
+            echo "::error::second: \${VM_ID} runs on --cicustom, which REPLACES the user-data; if"
+            echo "::error::that snippet lost its 'user:' line, cloud-init creates a different"
+            echo "::error::default account and ssh by key fails even though everything booted."
             exit 1
           fi
 
