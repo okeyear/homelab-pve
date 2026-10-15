@@ -27,11 +27,25 @@ stages:
   - checks
 
 variables:
+  # Both of these exist because the job runs on a host that cannot reach
+  # Docker Hub or pypi.org directly. Point them somewhere else rather than
+  # editing the job: the accelerator list at https://status.anye.xyz/ is
+  # checked hourly, and the first choice going down should not mean editing
+  # this file.
+  #
+  # NOTE: this only covers the job's own image. gitlab-runner additionally
+  # pulls registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper
+  # before any docker-executor job can start, and that registry is NOT proxied
+  # by the Docker Hub accelerators below. If a job hangs on "Pulling docker
+  # image ... gitlab-runner-helper ...", no change here will help -- the host
+  # has to be able to reach registry.gitlab.com.
+  CI_IMAGE: "docker.1ms.run/library/python:3.12-slim"
+  PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_ROOT_USER_ACTION: ignore
 
 .workflows:
-  image: python:3.12-slim
+  image: $CI_IMAGE
   # Name the runner instead of relying on "any runner will take this". The
   # runner that exists here is a group runner tagged docker + self-hosted, and
   # whether it also accepts untagged work is a property of the runner's own
