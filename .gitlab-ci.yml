@@ -32,6 +32,15 @@ variables:
 
 .workflows:
   image: python:3.12-slim
+  # Name the runner instead of relying on "any runner will take this". The
+  # runner that exists here is a group runner tagged docker + self-hosted, and
+  # whether it also accepts untagged work is a property of the runner's own
+  # config.toml, not of what this project's settings page says. Pinning the
+  # tags makes the job say out loud which machine it expects, and turns
+  # "stuck pending" into either a run or a runner problem you can see.
+  tags:
+    - docker
+    - self-hosted
   before_script:
     - pip install --quiet pyyaml
 

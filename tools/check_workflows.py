@@ -29,9 +29,15 @@ REPO = Path(os.environ.get("REPO_ROOT")
 WF_DIR = REPO / ".github" / "workflows"
 ACTION_DIRS = [REPO / ".github" / "actions", REPO / "pipeline-template" / "actions"]
 # Prefer whatever bash is on PATH; CI runs in a Debian slim image, the local
-# runs found Git for Windows' bash by absolute path.
+# runs found Git for Windows' bash by absolute path. bin\, not usr\bin\ -- see
+# the note in gencheck.py: only the launcher puts its own /usr/bin on PATH.
+_WINDOWS_BASH = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"D:\bin\PortableGit\bin\bash.exe",
+)
 BASH = (os.environ.get("BASH") or shutil.which("bash")
-        or r"C:\Program Files\Git\bin\bash.exe")
+        or next((p for p in _WINDOWS_BASH if os.path.exists(p)),
+                _WINDOWS_BASH[0]))
 
 # A `${{ ... }}` expression GitHub cannot parse fails the DISPATCH, not the
 # push: "HTTP 422 Invalid Argument - failed to parse workflow". The usual

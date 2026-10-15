@@ -30,11 +30,20 @@ import yaml
 REPO = os.environ.get("REPO_ROOT") or r"C:\Users\JackPeng\devops\github\homelab-pve"
 WF_DIR = os.path.join(REPO, ".github", "workflows")
 
-# git is not on PATH in this environment, and neither is its bash
-# Prefer whatever bash is on PATH; CI runs in a Debian slim image, the local
-# runs found Git for Windows' bash by absolute path.
+# git is not on PATH in this environment, and neither is its bash.
+# BASH_ENV plus shell functions is what makes the stubs work (see make_prelude),
+# and a step also runs real commands -- sed, cat, seq -- so bash has to be the
+# LAUNCHER, not the raw MSYS2 shell. PortableGit's usr\bin\bash.exe starts with
+# a PATH that has no /usr/bin in it, so every one of those commands dies with
+# 127 and the case fails as "exit 127" with nothing on stdout to explain it.
+# CI runs in a Debian slim image and finds a normal bash either way.
+_WINDOWS_BASH = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"D:\bin\PortableGit\bin\bash.exe",
+)
 BASH = (os.environ.get("BASH") or shutil.which("bash")
-        or r"C:\Program Files\Git\bin\bash.exe")
+        or next((p for p in _WINDOWS_BASH if os.path.exists(p)),
+                _WINDOWS_BASH[0]))
 
 # commands the steps shell out to; all no-ops
 STUBS = ["wget", "qemu-img", "qm", "ssh-keygen", "ssh", "rsync", "sudo",
