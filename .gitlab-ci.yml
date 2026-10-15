@@ -1,0 +1,50 @@
+# GitLab CI for homelab-pve.
+#
+# The deliverable of this repo is the GitHub Actions workflows, and the thing
+# they get wrong most often is not a syntax error -- it is something that only
+# shows up when a step actually runs. So CI here is the same two checks that
+# have to pass locally before a push, not a second opinion about them:
+#
+#   check_workflows.py  parses every workflow and composite action as YAML,
+#                       hands every `run:` block to `bash -n`, and rejects the
+#                       `${{ }}` shapes and composite-action context lookups
+#                       that GitHub only complains about at dispatch time
+#
+#   gencheck.py         simulates a dispatch: runs each step's shell for real
+#                       with the workflow variables filled in, then parses the
+#                       setup_*.sh that fall out. A heredoc body is DATA to
+#                       bash -n, so a syntax error inside one is invisible to
+#                       the first check and only surfaces on the PVE.
+#
+# It also catches two classes that are semantically wrong rather than
+# syntactically wrong, and which have each cost a real run:
+#
+#   - a runner-side variable that was left escaped, so the generated script
+#     ships it blank (an empty ssh_authorized_keys once cost five runs)
+#   - a ${NAME} in an unquoted heredoc that the runner has no value for
+
+stages:
+  - checks
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_ROOT_USER_ACTION: ignore
+
+.workflows:
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet pyyaml
+
+workflow-syntax:
+  extends: .workflows
+  stage: checks
+  script:
+    - echo "== YAML + bash -n + expression shapes =="
+    - python tools/check_workflows.py
+
+dispatch-simulation:
+  extends: .workflows
+  stage: checks
+  script:
+    - echo "== simulating every dispatch case =="
+    - python tools/gencheck.py
