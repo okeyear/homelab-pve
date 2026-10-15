@@ -46,8 +46,12 @@ BASH = (os.environ.get("BASH") or shutil.which("bash")
                 _WINDOWS_BASH[0]))
 
 # commands the steps shell out to; all no-ops
+# sha256sum is here because setup_archlinux_tpl.sh verifies the qcow2 against the
+# mirror's .SHA256. Left unstubbed it would really run, read whatever the stubbed
+# wget left on stdin (nothing), and fail every case with a checksum error that
+# has nothing to do with the script.
 STUBS = ["wget", "qemu-img", "qm", "ssh-keygen", "ssh", "rsync", "sudo",
-         "tailscale", "apt-get", "pgrep"]
+         "tailscale", "apt-get", "pgrep", "sha256sum"]
 
 # (workflow file, OS input, extra env, expectation)
 #   expectation "ok"    -> every run: step must succeed, scripts must parse
@@ -78,6 +82,11 @@ CASES = [
     ("01c-setup-vm-os-template-other.yml", "alinux3",
      {"VM_ID": "2003",
       "ALINUX3_IMAGE": "aliyun_3_x64_20G_nocloud_alibase_20260828.qcow2"}, "ok"),
+    ("01c-setup-vm-os-template-other.yml", "archlinux",
+     {"VM_ID": "20000"}, "ok"),
+    # the guard has to keep refusing things it has never heard of
+    ("01c-setup-vm-os-template-other.yml", "gentoo",
+     {"VM_ID": "2999"}, "fails"),
     ("01-setup-vm-os-template.yml", "ubuntu24.04", {}, "fails"),
 ]
 

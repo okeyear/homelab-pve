@@ -106,7 +106,8 @@ CIDR='10.10.10'
 # 2403: openEuler-24.03
 # 2404: Ubuntu 2404
 # 2604: Ubuntu 2604
-# 2222: archlinux 
+
+# 20000: Arch Linux (archlinux, pacman, cloudimg)
 
 # 虚拟机ID说明：
 # 虚拟机网段为10.10.10. 
@@ -126,6 +127,21 @@ CIDR='10.10.10'
 直接部署code server到PVE上, 打开浏览器即可写代码
 
 ### pve os template
+模板制作全部走 `workflow_dispatch`,没有 push 触发 —— 推代码不会烧 runner。
+
+| workflow | 发行版 | VM ID |
+|---|---|---|
+| [01a](.github/workflows/01a-setup-vm-os-template-deb.yml) | ubuntu22.04 / 24.04 / 26.04, debian12 / 13 | 2204 / 2404 / 2604, 2112 / 2113 |
+| [01b](.github/workflows/01b-setup-vm-os-template-rhel.yml) | centos7 / stream9 / stream10, almalinux8 / 9 / 10 | 2007 / 2109 / 21010, 2008 / 2009 / 20010 |
+| [01c](.github/workflows/01c-setup-vm-os-template-other.yml) | openEuler 24.03, alinux3, archlinux | 2403, 2003, 20000 |
+
+默认 runner 是 `self-hosted`。传 `runner: ubuntu-latest` 会切到 GitHub 托管 runner,
+public 仓库免费,但会占用免费分钟额度。
+
+镜像与软件源一律走 CERNET。Arch 的 cloud image 是
+`Arch-Linux-x86_64-cloudimg.qcow2`(注意不是 `archlinux.qcow2`,Arch 改过名),
+仓库树是 `core` + `extra`。
+
 ### pve create VMs
 ### kubeadm k8s
 https://github.com/TimeBye/kubeadm-ha

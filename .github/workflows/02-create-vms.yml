@@ -39,6 +39,7 @@ on:
           - centos9stream
           - alinux3
           - openEuler2403
+          - archlinux
 
       ip_list:
         description: 'VMs IP List'
@@ -107,6 +108,8 @@ jobs:
           2403 openEuler2403
           2404 ubuntu24.04
           2604 ubuntu26.04
+
+          20000 archlinux
           EOF
           temp_id=$(grep "\s${{ github.event.inputs.vm_template }}$" versions.txt | awk '{print $1}')
           echo "VM_TEMPLATE_ID=$temp_id"      >> "$GITHUB_ENV"
