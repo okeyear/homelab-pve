@@ -751,12 +751,22 @@ jobs:
           # ("error: you cannot install a partial upgrade"), so a -Sy followed by
           # -S on a rolling distro is not a faster path, it is a failed one.
           #
-          # telnet lives in the `extra` repo, not `core`, so this needs the
-          # full [core+extra] set from mirrorlist above to resolve at all.
+          # inetutils, NOT telnet. Arch has no package called telnet -- run #13
+          # died here with "error: target not found: telnet", after four minutes
+          # of perfectly good work, because every other distro in this repo has a
+          # real telnet package and it is muscle memory. The client moved into
+          # inetutils (core); https://archlinux.org/packages/?q=telnet returns
+          # perl-net-telnet, putty, zssh, ser2net and python-standard-telnetlib,
+          # and not one of them installs /usr/bin/telnet. Every other name in this
+          # list was confirmed to resolve by that same run.
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
-            vim wget telnet qemu-guest-agent curl ca-certificates \
+            vim wget inetutils qemu-guest-agent curl ca-certificates \
             jq git iproute2 openssh sudo
+          command -v telnet >/dev/null || {
+            echo "::error::inetutils did not provide a telnet client"
+            exit 1
+          }
 
           # TEMPORARILY DISABLED: containerd + kubernetes.
           # bash /root/setup-container-runtime.sh

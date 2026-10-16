@@ -48,6 +48,27 @@ if WANT == "setup_archlinux.sh":
     assert "pacman -Syu --noconfirm" in text
     assert "pacman -Sy " not in text, "a bare -Sy would be a partial upgrade"
     print("ok  full -Syu, no partial -Sy")
+    # run #13 died here: Arch has no package called telnet. bash -n is happy with
+    # any word on a pacman line, so only an explicit assertion catches this.
+    lines = text.splitlines()
+    joined = ""
+    for i, ln in enumerate(lines):
+        if "pacman -S --noconfirm" in ln and "--needed" in ln:
+            joined = ln
+            while joined.rstrip().endswith("\\") and i + 1 < len(lines):
+                i += 1
+                joined = joined.rstrip()[:-1] + " " + lines[i].strip()
+            break
+    assert joined, "the pacman -S --needed line vanished"
+    targets = joined.split("--needed", 1)[1].replace("\\", " ").split()
+    assert targets, f"could not parse pacman targets out of: {joined!r}"
+    assert "telnet" not in targets, \
+        f"Arch has no telnet package, use inetutils: {targets}"
+    assert "inetutils" in targets, f"inetutils missing from {targets}"
+    print(f"ok  pacman targets carry no phantom package: {' '.join(targets)}")
+    assert "command -v telnet" in text, \
+        "no proof that inetutils actually shipped a telnet client"
+    print("ok  guest script asserts a telnet client exists")
 else:
     print("===== assertions =====")
     # runner-side variables must be baked in, not escaped
