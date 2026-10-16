@@ -309,37 +309,62 @@ jobs:
           # prove the clones booted, that cloud-init ran, or that the
           # template's ssh key reached the guest -- which is exactly
           # where a template goes wrong and exactly what a green run
-          # hides. The guests boot in parallel, so probe them together.
+          # hides.
+          #
+          # The last VM is probed seconds after `qm start`, so a single
+          # attempt is not a test of anything: a guest that needs thirty
+          # seconds to boot and another thirty for cloud-init fails it
+          # while being perfectly healthy. Run #11 saw 10.10.10.102 fail
+          # for exactly that reason. So this polls against a wall-clock
+          # budget and drops each guest out as it answers, rather than
+          # one shot at all of them.
+          #
           # Key auth first (the template carries --sshkey), password via
           # sshpass as the fallback (01a sets PasswordAuthentication yes
-          # together with --cipassword).
+          # together with --cipassword). </dev/null on both: this script
+          # is run from a file now, but its stdin is still the ssh
+          # channel, and a guest ssh that reads it would eat the channel.
           probe() {
             if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -o ConnectTimeout=5 -o BatchMode=yes "${VM_USER}@${1}" true 2>/dev/null; then
+                  -o ConnectTimeout=5 -o BatchMode=yes "${VM_USER}@$1" true </dev/null 2>/dev/null; then
               return 0
             fi
             if command -v sshpass >/dev/null 2>&1; then
               if sshpass -p vagrant ssh -o StrictHostKeyChecking=no \
                     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
-                    "${VM_USER}@${1}" true 2>/dev/null; then
+                    "${VM_USER}@$1" true </dev/null 2>/dev/null; then
                 return 0
               fi
             fi
             return 1
           }
 
+          GUEST_ROUNDS=60        # 5s apart, so a 5 minute budget
           guest_ok=0
-          for ip in ${GUEST_IPS}; do
-            if probe "$ip"; then
-              echo "guest ${VM_USER}@${ip} reachable"
-              guest_ok=$((guest_ok + 1))
-            else
-              echo "::warning::guest ${VM_USER}@${ip} did not answer ssh"
+          pending="${GUEST_IPS}"
+          round=0
+          while [ -n "${pending// /}" ] && [ "$round" -lt "$GUEST_ROUNDS" ]; do
+            round=$((round + 1))
+            still=""
+            for ip in ${pending}; do
+              if probe "$ip"; then
+                echo "guest ${VM_USER}@${ip} reachable on attempt ${round}"
+                guest_ok=$((guest_ok + 1))
+              else
+                still="${still} ${ip}"
+              fi
+            done
+            pending="${still}"
+            if [ -n "${pending// /}" ]; then
+              echo "attempt ${round}: still waiting on${pending}"
+              sleep 5
             fi
           done
-          if [ "$guest_ok" -ne "$CREATED" ]; then
-            echo "::error::only ${guest_ok} of ${CREATED} guests answered ssh; the VMs exist but are not usable"
-            echo "::error::check in this order:"
+
+          if [ -n "${pending// /}" ]; then
+            echo "::error::these guests never answered ssh in ${GUEST_ROUNDS} attempts:${pending}"
+            echo "::error::the VMs are configured but not usable, which a green run"
+            echo "::error::used to hide. Check in this order:"
             echo "::error::  1. does template ${VM_TEMPLATE_ID} still carry --sshkey?"
             echo "::error::  2. was it sealed with ciupgrade 1? A clone of a template whose"
             echo "::error::     ciupgrade was already consumed never re-runs cloud-init, so"
@@ -360,9 +385,24 @@ jobs:
 
           cat setup_vms.sh
 
-          # 把本地脚本复制过去并立即执行
-          alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          cat setup_vms.sh | ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
+          # Put the script in a FILE on PVE and run it from there. Do not
+          # pipe it into `bash -s`.
+          #
+          # `bash -s` reads its program from stdin lazily, one chunk at a
+          # time, and every command the script runs inherits that same
+          # stdin. So the first `ssh` in the guest-reachability probe
+          # below consumes the rest of the script as its own input: bash
+          # then hits EOF in the middle of the for loop, finishes with
+          # whatever it has already parsed, and exits with the status of
+          # the last echo -- which is 0. Run #11 did exactly that. The
+          # script stopped right after the first unreachable guest, the
+          # failure block that was supposed to report it never ran, and
+          # the step came back green. This is the same reason 01a/01b/01c
+          # stream their guest scripts into a file on the guest instead of
+          # piping them to `bash -s`.
+          cat setup_vms.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} \
+            'cat > /root/setup_vms.sh && bash /root/setup_vms.sh'
 
       # - uses: actions/checkout@v4
 

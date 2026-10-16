@@ -9,6 +9,10 @@ Each of those is a failure mode that costs a real run otherwise, and two of
 them (3 and 4) only surface at dispatch or at template-validation time --
 neither shows up as a failed push.
 
+Every `run:` block goes through a FILE here, never `bash -c <string>`: MSYS2
+silently truncates a long `-c` argument, and the symptom is a heredoc that
+stops mid-line with no error at all. See the note in gencheck.py.
+
 Kept importable (main() + __main__ guard) so the rules can be unit-tested
 against the exact text that broke a real run.
 """

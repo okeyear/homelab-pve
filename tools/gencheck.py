@@ -50,9 +50,13 @@ BASH = (os.environ.get("BASH") or shutil.which("bash")
 # mirror's .SHA256. Left unstubbed it would really run, read whatever the stubbed
 # wget left on stdin (nothing), and fail every case with a checksum error that
 # has nothing to do with the script.
+# sleep is here because 02 polls its guest-ssh probe for up to 60 rounds 5s
+# apart. Left real, the "guests never answer" case would spend five minutes
+# proving what a no-op sleep proves instantly -- and a test nobody waits for
+# is a test that gets skipped.
 # qm / pct / ssh / sshpass are NOT here -- see FAKE_PVE below.
 STUBS = ["wget", "qemu-img", "ssh-keygen", "rsync", "sudo",
-         "tailscale", "apt-get", "pgrep", "sha256sum"]
+         "tailscale", "apt-get", "pgrep", "sha256sum", "sleep"]
 
 
 # `qm` used to be `qm() { :; }`. That was fine while the generated scripts only
@@ -225,10 +229,11 @@ template: 1
 #     "seed"    {filename: content} written into the case dir before the step
 #                runs -- this is where the fake PVE's template lands
 #     "execute" [script, ...] run each generated script with bash INSTEAD of
-#                only `bash -n`-ing it. 02's step pipes setup_vms.sh into
-#                `ssh ... 'bash -s'`, and ssh is a stub, so without this the
-#                script is never executed and its ~40 lines of assertions
-#                are never run at all.
+#                only `bash -n`-ing it. 02's step ships setup_vms.sh to PVE
+#                and runs it there, and without this the script is never
+#                executed and its ~40 lines of assertions are never run.
+#     "forbid"  [(regex, why)] patterns that must not appear in any run: block
+#                the case executes.
 CASES = [
     ("01a-setup-vm-os-template-deb.yml", "ubuntu24.04",
      {"VM_ID": "2404", "ubuntu_ver": "24.04"}, "ok"),
@@ -269,7 +274,17 @@ CASES = [
     # whole job is to assert on what it just did to PVE.
     ("02-create-vms.yml", "ubuntu26.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
-     "ok", {"seed": {"cfg-2604": TPL_2604}, "execute": ["setup_vms.sh"]}),
+     "ok", {"seed": {"cfg-2604": TPL_2604}, "execute": ["setup_vms.sh"],
+            "forbid": [(r"['\"]\s*bash -s\s*['\"]",
+                        "a remote command of `bash -s`. bash reads a `-s` program "
+                        "from stdin lazily and every command the script runs "
+                        "inherits that stdin, so the first ssh in the guest probe "
+                        "eats the rest of the script: bash hits EOF, finishes "
+                        "early, and exits with the status of the last echo -- 0. "
+                        "Run #11 lost its whole failure block that way and the "
+                        "step came back green. Ship the script to a file and run "
+                        "that. (The pattern matches the quoted remote command, not "
+                        "the prose that explains why not to.)")]}),
     # not a template -> refuse to clone a live VM
     ("02-create-vms.yml", "ubuntu26.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
@@ -460,6 +475,10 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
     opts = opts or {}
     seed = opts.get("seed") or {}
     execute = opts.get("execute") or []
+    # [(regex, why)] patterns that must not appear in any run: block this case
+    # executes. For structural mistakes that no amount of executing the
+    # generated script can catch.
+    forbid = opts.get("forbid") or []
 
     with open(os.path.join(WF_DIR, wf_name), encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
@@ -509,7 +528,19 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
             guard_ran = True
             runner_only |= set(GITHUB_ENV_WRITE.findall(step["run"]))
             executed.append((name, step["run"]))
-            r = subprocess.run([BASH, "-c", subst(step["run"], os_input)],
+            # Run the step from a FILE, never as `bash -c <string>`.
+            # MSYS2 silently truncates a long -c argument on Windows: the
+            # 02 step's body is ~9.7 KB and came out cut at 8187 characters,
+            # mid-line, inside a heredoc. Nothing errored -- the heredoc just
+            # ended early and the generated setup_vms.sh was 12 lines short
+            # with an unterminated echo, which is what `bash -n` caught. A
+            # harness that truncates the very text it is checking is worse
+            # than no harness, because the truncation reads as a finding
+            # about the workflow.
+            step_path = os.path.join(d, f"_step{len(executed)}.sh")
+            with open(step_path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(subst(step["run"], os_input))
+            r = subprocess.run([BASH, step_path],
                                cwd=d, env=env, capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
             if r.returncode != 0:
@@ -538,9 +569,16 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
         for name, text in executed:
             for msg in unescaped_in_unquoted_heredoc(text, runner_only):
                 problems.append(f"{name}: {msg}")
+            for pattern, why in forbid:
+                if re.search(pattern, text):
+                    problems.append(f"{name}: {why}")
 
         for fn in sorted(os.listdir(d)):
-            if not fn.endswith(".sh") or fn == "prelude.sh":
+            if not fn.endswith(".sh"):
+                continue
+            # prelude.sh is the stub library, _stepN.sh is the step's own text
+            # that we just executed. Neither is a script the workflow generates.
+            if fn == "prelude.sh" or fn.startswith("_step"):
                 continue
             path = os.path.join(d, fn)
             with open(path, encoding="utf-8", errors="replace") as fh:
