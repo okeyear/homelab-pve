@@ -112,6 +112,17 @@ qm() {
       return 2 ;;
     clone)
       src="$1"; dst="$2"
+      # `clone-fail` exists because the script no longer lets `qm clone`'s
+      # output reach the log: silencing the ~100 progress lines is only safe
+      # if a non-zero clone is still fatal WITH its stderr replayed. Nothing
+      # else in the harness can reach that branch -- a bad template trips the
+      # `template:` assertion first -- so without this marker the silencing
+      # could swallow every clone failure and the case would still report ok.
+      if [ -f "$FAKE_PVE/clone-fail" ]; then
+        echo "clone failed: storage 'local-zfs' does not support linked clones"
+        echo "Task 'vzdump:xxx: rootdir' failed: exit code 1" >&2
+        return 1
+      fi
       if [ ! -f "$(FAKE_CFG "$src")" ]; then
         echo "clone failed: VM $src does not exist" >&2; return 1
       fi
@@ -228,6 +239,12 @@ template: 1
 #   options is an optional dict:
 #     "seed"    {filename: content} written into the case dir before the step
 #                runs -- this is where the fake PVE's template lands
+#     "expect_out" regex that must appear in the output of an executed script.
+#                Without it "fails" only means the script exited non-zero, which
+#                is satisfied by ANY failure -- including one the guard under
+#                test never reached. That is too weak to be worth running: a
+#                negative test that passes for the wrong reason is a test that
+#                has stopped testing.
 #     "execute" [script, ...] run each generated script with bash INSTEAD of
 #                only `bash -n`-ing it. 02's step ships setup_vms.sh to PVE
 #                and runs it there, and without this the script is never
@@ -268,7 +285,12 @@ CASES = [
     # the guard has to keep refusing things it has never heard of
     ("01c-setup-vm-os-template-other.yml", "gentoo",
      {"VM_ID": "2999"}, "fails"),
-    ("01-setup-vm-os-template.yml", "ubuntu24.04", {}, "fails"),
+    # The retired umbrella workflow must keep refusing and must keep naming the
+    # three workflows that replaced it. Its message is Chinese, so it never
+    # matched the generic "not implemented" probe this case used to rely on --
+    # and the discarded-problems bug above meant that mismatch could not fail.
+    ("01-setup-vm-os-template.yml", "ubuntu24.04", {}, "fails",
+     {"expect_out": "01a-setup-vm-os-template-deb.yml"}),
 
     # 02 used to have no coverage at all, and it is the one workflow whose
     # whole job is to assert on what it just did to PVE.
@@ -289,22 +311,35 @@ CASES = [
     ("02-create-vms.yml", "ubuntu26.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
      "fails", {"seed": {"cfg-2604": TPL_2604.replace("template: 1\n", "")},
+               "expect_out": "is not marked as a template",
                "execute": ["setup_vms.sh"]}),
     # no tags -> refuse rather than clone into an empty --tags
     ("02-create-vms.yml", "ubuntu26.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
      "fails", {"seed": {"cfg-2604": TPL_2604.replace("tags: template;ubuntu26.04\n", "")},
+               "expect_out": "carries no tags",
                "execute": ["setup_vms.sh"]}),
     # the VMs come up but the guests never answer ssh -> that is a failure,
     # not a pass. This is the check run #9 did not have.
     ("02-create-vms.yml", "ubuntu26.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
      "fails", {"seed": {"cfg-2604": TPL_2604, "ssh-down": ""},
+               "expect_out": "never answered ssh",
                "execute": ["setup_vms.sh"]}),
     # an unknown template name must not reach `qm clone` as an empty id
     ("02-create-vms.yml", "ubuntu99.04",
      {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
-     "fails", {"seed": {"cfg-2604": TPL_2604}}),
+     "fails", {"seed": {"cfg-2604": TPL_2604},
+               "expect_out": "no VM ID is mapped to 'ubuntu99.04'"}),
+    # `qm clone`'s progress output is now redirected to a file. A failing
+    # clone must still abort the run and still replay PVE's stderr, or the
+    # run comes back green having created nothing -- which is exactly what
+    # run #9 did.
+    ("02-create-vms.yml", "ubuntu26.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "fails", {"seed": {"cfg-2604": TPL_2604, "clone-fail": ""},
+               "expect_out": r"::error::qm clone 2604 -> 1011 failed",
+               "execute": ["setup_vms.sh"]}),
 ]
 
 
@@ -545,10 +580,24 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
                                encoding="utf-8", errors="replace")
             if r.returncode != 0:
                 if expectation == "fails" and not execute:
-                    if "not implemented" not in r.stdout:
+                    # Same two rules as the executed-script branch below: a case
+                    # may name the message it expects, and the verdict must be
+                    # derived from `problems`. The hardcoded True here used to
+                    # discard the very problem this block had just appended, so
+                    # a step that failed for an unrecognised reason still
+                    # printed "ok" -- the same discarded-problems bug that was
+                    # already fixed in the final return of this function.
+                    want = opts.get("expect_out")
+                    if want:
+                        if not re.search(want, r.stdout + r.stderr):
+                            problems.append(
+                                f"{name}: it did fail, but not for the reason "
+                                f"this case exists to test: expected /{want}/ "
+                                f"nowhere in the output.\n{r.stdout[:600]}")
+                    elif "not implemented" not in r.stdout:
                         problems.append(
                             f"{name}: expected a 'not implemented' message, got:\n{r.stdout[:400]}")
-                    return label, made, problems, True
+                    return label, made, problems, not problems
                 problems.append(f"{name}: exit {r.returncode}\n{r.stdout[-800:]}")
                 return label, made, problems, False
             # A case that declares `execute` is expecting the failure to come
@@ -602,6 +651,16 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
                 e = subprocess.run([BASH, path], cwd=d, env=env,
                                    capture_output=True, text=True,
                                    encoding="utf-8", errors="replace")
+                # "exited non-zero" is the same answer whether the guard fired
+                # or the script died somewhere else entirely. A "fails" case
+                # that declares expect_out insists on the reason as well.
+                #
+                # This belongs inside the "fails" branch, not after it. It used
+                # to be an `elif` on `expectation == "fails"`, which meant it
+                # only ever ran for "ok" cases -- every "fails" case accepted
+                # any non-zero exit whatsoever, so the harness could not tell a
+                # working guard from an unrelated crash.
+                want = opts.get("expect_out")
                 if expectation == "fails":
                     if e.returncode == 0:
                         problems.append(
@@ -609,6 +668,13 @@ def run_case(wf_name, os_input, extra_env, expectation, opts=None):
                             f"completion -- the guard it is supposed to make is "
                             f"not firing"
                         )
+                    elif want and not re.search(want, e.stdout + e.stderr):
+                        problems.append(
+                            f"{fn}: it did fail, but not for the reason this "
+                            f"case exists to test: expected /{want}/ nowhere "
+                            f"in the output.\n"
+                            f"--- stdout tail ---\n{e.stdout[-2500:]}\n"
+                            f"--- stderr tail ---\n{e.stderr[-1500:]}")
                 elif e.returncode != 0:
                     problems.append(
                         f"{fn}: exit {e.returncode} against the fake PVE\n"

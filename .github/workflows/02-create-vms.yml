@@ -235,7 +235,29 @@ jobs:
             sleep 2
             qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
 
-            qm clone "$VM_TEMPLATE_ID" "$VM_ID" --full
+            # `qm clone --full` narrates every 1% of a 20 GiB ZFS-to-ZFS
+            # transfer: ~100 lines per VM, ~300 per run. That volume is
+            # not cosmetic -- run #12's step was so large that GitHub's
+            # own log viewer refused to render it ("This step has been
+            # truncated due to its large size"), which puts the ending
+            # evidence, the part that actually proves the run, out of
+            # reach in the browser.
+            #
+            # Silence it, but never at the price of hiding a failure: the
+            # output goes to a file rather than to /dev/null, and a
+            # non-zero clone is still fatal with the real PVE stderr
+            # replayed into the annotation. No pipe anywhere -- `qm ...
+            # 2>&1 | tail` under `set -o pipefail` would reintroduce the
+            # SIGPIPE-141 trap that the check() herestring avoids.
+            clone_log=$(mktemp)
+            if ! qm clone "$VM_TEMPLATE_ID" "$VM_ID" --full >"$clone_log" 2>&1; then
+              echo "::error::qm clone ${VM_TEMPLATE_ID} -> ${VM_ID} failed"
+              sed 's/^/::error::   /' "$clone_log"
+              rm -f "$clone_log"
+              exit 1
+            fi
+            rm -f "$clone_log"
+            echo "cloned ${VM_TEMPLATE_ID} -> ${VM_ID} (full)"
             qm set  "$VM_ID" --core "$(cores_for $VM_ID)" --memory "$(mem_for $VM_ID)" --name "$VM_NAME"
             qm set  "$VM_ID" --ipconfig0 "ip=${VM_IP}/24,gw=${CIDR}.1"
             qm set  "$VM_ID" --cipassword vagrant --ciuser "$VM_USER"
@@ -262,8 +284,12 @@ jobs:
               exit 1
             fi
 
+            # Kept in a variable, not printed. The full dump is ~30 lines
+            # per VM including one ~700-character URL-encoded sshkeys
+            # blob, and the only place it is actually needed is the
+            # failure path -- check() below replays it under an
+            # ::error:: prefix the moment an assertion does not match.
             cfg=$(qm config "$VM_ID")
-            printf '%s\n' "$cfg"
 
             fail=0
             # check <label> <expected> <ERE tested against the config>
