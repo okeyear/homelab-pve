@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Github Action Runner/Agent'
+        description: "Github Action Runner/Agent"
         required: true
         default: self-hosted
         type: choice
@@ -17,38 +17,39 @@ on:
           - ubuntu-latest
 
       vm_prefix:
-        description: 'VM Name Prefix'
+        description: "VM Name Prefix"
         required: true
-        default: 'k8s-'
+        default: "k8s-"
         type: string
 
       vm_template:
-        description: 'VM Clone from Template'
+        description: "VM Clone from Template"
         required: true
-        default: almalinux9
+        default: ubuntu26.04
         type: choice
         options:
+          - ubuntu26.04
           - ubuntu24.04
           - ubuntu22.04
           - debian13
           - debian12
           - almalinux10
           - almalinux9
-          - almalinux8
           - centos7
           - centos9stream
+          - centos10stream
           - alinux3
           - openEuler2403
           - archlinux
 
       ip_list:
-        description: 'VMs IP List'
+        description: "VMs IP List"
         required: true
-        default: '11,101,102'
+        default: "11,101,102"
         type: string
 
       vm_user:
-        description: 'VM Guest: OS User'
+        description: "VM Guest: OS User"
         required: true
         default: vagrant
         type: choice
@@ -61,7 +62,7 @@ env:
   # VM_TEMPLATE_ID: ${{ github.event.inputs.vm_template_id }} # vm模板的ID
   VM_PREFIX: ${{ github.event.inputs.vm_prefix }}
   VM_USER: ${{ github.event.inputs.vm_user }}
-  CIDR: ${{ vars.CIDR }}  # vmbr0 vmbr1 的网段
+  CIDR: ${{ vars.CIDR }} # vmbr0 vmbr1 的网段
 
   # MASTER_IP: 10.10.10.11
   # NODE01_IP: 10.10.10.101
@@ -77,18 +78,18 @@ jobs:
     # runs-on: [self-hosted]
     # runs-on: ubuntu-latest
     permissions:
-      id-token: write   # 让 GitHub 颁发 OIDC
+      id-token: write # 让 GitHub 颁发 OIDC
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v5
-            
+
       # 像普通官方 action 一样用 with 传参
       - uses: ./pipeline-template/actions/prepare-env
         # with:
         #   node-version: '22'      # 想传啥就传啥
         #   python-version: '3.10'  # 固定版本也行, 这个是 pipeline agent运行用的,不是scf业务环境
-      
+
       - name: Get VM Template ID
         run: |
           cat > versions.txt <<'EOF'
@@ -128,20 +129,18 @@ jobs:
             echo "keyless=true" >> $GITHUB_OUTPUT
           else
             echo "keyless=false" >> $GITHUB_OUTPUT
-          fi      
+          fi
 
-
-      
       # 1️⃣  把 Runner 接入 tailnet
       - name: setup Tailscale Connect (if needed)
         if: steps.check-ssh.outputs.keyless != 'true'
         uses: tailscale/github-action@v3
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci     # 与 ACL 中的 tag 保持一致
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci # 与 ACL 中的 tag 保持一致
           version: latest # https://pkgs.tailscale.com/stable/#static
-          use-cache: 'true'
+          use-cache: "true"
 
       # 2️⃣  正常通过 100.x 或主机名访问远程机
       - name: Remote command via SSH
@@ -188,8 +187,6 @@ jobs:
           alias ssh='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           cat setup_vms.sh | ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} 'bash -s'
 
-
-
       # - uses: actions/checkout@v4
 
       # - name: Install OS base pkgs
@@ -197,15 +194,11 @@ jobs:
       #     sudo apt-get update --yes -qq
       #     sudo apt-get install --yes --no-install-recommends python3-pip unzip curl wget jq git build-essential -qq
 
-
       # - name: Set up Docker Buildx
       #   uses: docker/setup-buildx-action@v3    # 安装 Docker Buildx 工具链
-
 
       # - name: Debug
       #   run: |
       #     pwd
       #     ls
       #     qm list
-
-    
