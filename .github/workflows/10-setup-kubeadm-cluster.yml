@@ -32,15 +32,27 @@ on:
         default: '["10.10.10.11", "10.10.10.101", "10.10.10.102"]'
 
       k8s_version:
-        description: 'supported stable k8s version https://kubernetes.io/releases/'
+        description: 'auto = current stable; a number pins an exact minor'
         required: true
-        default: '1.36'
+        default: 'auto'
         type: choice
+        # This list CANNOT be built from a command. workflow_dispatch input
+        # metadata is parsed by GitHub before any runner exists, and the form
+        # is rendered straight from the YAML, so `options:` only accepts
+        # literal scalars -- no expressions, no fromJSON, no shell. That is a
+        # platform limit, not a syntax mistake.
+        #
+        # `auto` is what makes this maintainable: it resolves at run time and
+        # never goes stale. The numbered entries exist only to pin a version on
+        # purpose, and they are checked against the live supported list below,
+        # so listing one that has gone EOL fails loudly instead of quietly
+        # installing something nobody supports.
         options:
-          - '1.33'
-          - '1.34'
-          - '1.35'
+          - 'auto'
+          - '1.37'
           - '1.36'
+          - '1.35'
+          - '1.34'
 
 env:
   TAILSCALE_HOST: pve
@@ -142,7 +154,52 @@ jobs:
 
       - name: Get k8s version
         run: |
-          K8S_VERSION=$(curl -s https://kubernetes.io/releases/ | grep 'Latest Release' | grep -oP '(?<=value\>).*?(?= \(released:)' | grep "${{ github.event.inputs.k8s_version }}." )
+          set -euo pipefail
+          # The menu is static (see the note on k8s_version), but the version
+          # it points at does not have to be. Resolve it here.
+          #
+          # dl.k8s.io is kubernetes' own machine-readable endpoint -- plain
+          # text, no HTML, ~0.3s. The releases page it replaces is an HTML
+          # scrape, and that scrape returns an EMPTY STRING the moment the page
+          # changes shape: the old code below assigned the empty result to
+          # K8S_VERSION, echoed it, and exited 0. Downstream then got a version
+          # with nothing in it, from a green step. -f + the explicit emptiness
+          # check below are what turn that class of failure back into a failure.
+          wanted="${{ github.event.inputs.k8s_version }}"
+          if [ "$wanted" = "auto" ]; then
+            K8S_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt || true)
+          else
+            # Resolver, NOT a support check: this endpoint answers 200 for
+            # minors that went EOL years ago (stable-1.33.txt -> v1.33.13), so
+            # a 200 here proves nothing about whether the version is still
+            # supported. The scrape below is used only as that oracle.
+            K8S_VERSION=$(curl -fsSL "https://dl.k8s.io/release/stable-${wanted}.txt" || true)
+          fi
+          K8S_VERSION="${K8S_VERSION#v}"
+
+          if [ -z "$K8S_VERSION" ]; then
+            echo "::error::could not resolve a k8s version from '${wanted}'"
+            echo "::error::tried: https://dl.k8s.io/release/stable${wanted:+-$wanted}.txt"
+            exit 1
+          fi
+
+          # Herestring, not `curl | grep -q`: grep -q exits on the first match,
+          # curl dies of SIGPIPE, and under `set -o pipefail` the whole
+          # pipeline reports 141 -- which reads as "this version is NOT
+          # supported" for a version that is. Same trap 02-create-vms.sh
+          # avoids in its check().
+          #
+          # ERE, not -P: the page markup is `value>1.37.1 (released: ...)`, so
+          # the delimiter after the version is a space. `[^0-9.]` both matches
+          # it and stops 1.37 from matching 1.37.1, and PCRE is not available
+          # under every locale this runner has used.
+          releases=$(curl -fsSL https://kubernetes.io/releases/)
+          if ! grep -qE "value>${K8S_VERSION}[^0-9.]" <<<"$releases"; then
+            echo "::error::k8s ${K8S_VERSION} is not a currently supported release"
+            echo "::error::supported right now: $(grep -oE 'value>[0-9.]+' <<<"$releases" | sed 's/value>//' | paste -sd' ')"
+            exit 1
+          fi
+
           echo "k8s version: $K8S_VERSION"
           echo "K8S_VERSION=$K8S_VERSION" >> $GITHUB_ENV
 
