@@ -45,23 +45,199 @@ BASH = (os.environ.get("BASH") or shutil.which("bash")
         or next((p for p in _WINDOWS_BASH if os.path.exists(p)),
                 _WINDOWS_BASH[0]))
 
-# commands the steps shell out to; all no-ops
+# commands the steps shell out to that have no state worth modelling; all no-ops
 # sha256sum is here because setup_archlinux_tpl.sh verifies the qcow2 against the
 # mirror's .SHA256. Left unstubbed it would really run, read whatever the stubbed
 # wget left on stdin (nothing), and fail every case with a checksum error that
 # has nothing to do with the script.
-STUBS = ["wget", "qemu-img", "qm", "ssh-keygen", "ssh", "rsync", "sudo",
+# qm / pct / ssh / sshpass are NOT here -- see FAKE_PVE below.
+STUBS = ["wget", "qemu-img", "ssh-keygen", "rsync", "sudo",
          "tailscale", "apt-get", "pgrep", "sha256sum"]
 
-# (workflow file, OS input, extra env, expectation)
+
+# `qm` used to be `qm() { :; }`. That was fine while the generated scripts only
+# ever wrote values and then went quiet, but 02-create-vms.yml now reads its own
+# writes back out of `qm config` and asserts on them -- and a stub that answers
+# with nothing reports every one of those assertions as a failure. So `qm` keeps
+# a little state here: one file per VM under $FAKE_PVE, written by
+# clone/set/start/disk-resize and read back by config/status.
+#
+# It is still a stub -- it boots nothing. But it is a stub that can be WRONG,
+# which is what makes the negative cases worth running: seed a template without
+# `template: 1` and the script must refuse, seed a `ssh-down` marker and the
+# guest probe must fail. Neither of those can be shown with a no-op stub.
+FAKE_PVE = r'''
+FAKE_CFG() { printf '%s/cfg-%s' "$FAKE_PVE" "$1"; }
+
+FAKE_UPSERT() {   # FAKE_UPSERT <vmid> <key> <value>
+  local f tmp
+  f=$(FAKE_CFG "$1"); tmp="$f.tmp"
+  : > "$tmp"
+  grep -v "^$2:" "$f" > "$tmp" 2>/dev/null || true
+  printf '%s: %s\n' "$2" "$3" >> "$tmp"
+  sort "$tmp" > "$f" 2>/dev/null || cp "$tmp" "$f"
+  rm -f "$tmp"
+  return 0
+}
+
+FAKE_DROP() {     # FAKE_DROP <vmid> <key>
+  local f tmp
+  f=$(FAKE_CFG "$1"); tmp="$f.tmp"
+  grep -v "^$2:" "$f" > "$tmp" 2>/dev/null || true
+  cp "$tmp" "$f" 2>/dev/null || true
+  rm -f "$tmp"
+  return 0
+}
+
+qm() {
+  local sub id src dst key val out disk size f
+  sub="$1"; shift || true
+  case "$sub" in
+    config)
+      id="$1"
+      if [ -f "$(FAKE_CFG "$id")" ]; then cat "$(FAKE_CFG "$id")"; return 0; fi
+      echo "Configuration file 'nodes/qemu-server/$id.conf' does not exist" >&2
+      return 2 ;;
+    status)
+      id="$1"
+      if [ -f "$(FAKE_CFG "$id")" ]; then
+        grep -m1 -E '^(status|template):' "$(FAKE_CFG "$id")" 2>/dev/null || echo "status: unknown"
+        return 0
+      fi
+      echo "Configuration file 'nodes/qemu-server/$id.conf' does not exist" >&2
+      return 2 ;;
+    clone)
+      src="$1"; dst="$2"
+      if [ ! -f "$(FAKE_CFG "$src")" ]; then
+        echo "clone failed: VM $src does not exist" >&2; return 1
+      fi
+      cp "$(FAKE_CFG "$src")" "$(FAKE_CFG "$dst")"
+      # a clone of a template is not itself a template
+      FAKE_DROP "$dst" template
+      echo "creating a clone of VM $src with ID $dst" ;;
+    set)
+      id="$1"; shift
+      out="update VM $id:"
+      while [ $# -ge 1 ]; do
+        key="${1#--}"; val="${2-}"
+        if [ "$key" = "$1" ]; then shift; continue; fi
+        shift 2 || shift $#
+        # PVE normalises the option name to the config property name: run #9
+        # logged `update VM 1011: -cores 2` for `qm set --core 2`. Without
+        # this the fake would keep a stray `core:` key AND leave the real
+        # `cores:` untouched, and the script's `^cores:` assertion would then
+        # fail for a reason that exists only in the stub.
+        [ "$key" = "core" ] && key="cores"
+        out="$out -$key $val"
+        if [ "$key" = "cipassword" ]; then
+          out="$out <hidden>"     # PVE hides it and keeps it out of the config
+        else
+          FAKE_UPSERT "$id" "$key" "$val"
+        fi
+      done
+      echo "$out" ;;
+    start)
+      id="$1"
+      FAKE_UPSERT "$id" status "running"
+      FAKE_DROP "$id" template
+      echo "generating cloud-init ISO" ;;
+    shutdown)
+      id="$1"
+      if [ -f "$(FAKE_CFG "$id")" ]; then FAKE_UPSERT "$id" status "stopped"; fi ;;
+    destroy)
+      rm -f "$(FAKE_CFG "$1")" ;;
+    disk)           # qm disk resize <id> <disk> <size>
+      shift
+      id="$1"; disk="$2"; size="$3"
+      f=$(FAKE_CFG "$id")
+      if [ -f "$f" ]; then
+        sed -i "s|^\(${disk}: .*\),size=[^ ,]*|\1,size=${size}|" "$f" 2>/dev/null || true
+      else
+        printf '%s: local-zfs:vm-%s-disk-0,size=%s\n' "$disk" "$id" "$size" > "$f"
+      fi ;;
+    list)
+      printf '%-8s %-22s %-10s %s\n' VMID NAME STATUS MEM
+      for f in "$FAKE_PVE"/cfg-*; do
+        [ -f "$f" ] || continue
+        id=$(basename "$f"); id="${id#cfg-}"
+        printf '%-8s %-22s %-10s %s\n' "$id" \
+          "$(grep -m1 '^name:' "$f" | cut -d' ' -f2-)" \
+          "$(grep -m1 '^status:' "$f" | cut -d' ' -f2-)" \
+          "$(grep -m1 '^memory:' "$f" | cut -d' ' -f2-)"
+      done ;;
+    *) : ;;
+  esac
+  return 0
+}
+
+# no LXC container ever shares a number with these VMs
+pct() { if [ "$1" = "status" ]; then return 1; fi; return 0; }
+
+# `ssh-down` must only knock out the GUEST probe. The step that generates and
+# ships setup_vms.sh reaches PVE as root@<tailscale host>, and letting the
+# marker take that one down too would make the case "pass" for the wrong
+# reason -- the step failing, not the guest check inside the script.
+ssh() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      vagrant@10.*)
+        if [ -f "$FAKE_PVE/ssh-down" ]; then return 1; fi ;;
+    esac
+  done
+  return 0
+}
+
+# sshpass -p <pw> ssh ... : drop the password pair and delegate, so the password
+# fallback is judged by the same fake ssh as the key path
+sshpass() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -p) shift 2 ;;
+      *)  break ;;
+    esac
+  done
+  ssh "$@"
+}
+'''
+
+# The template 01a's ubuntu26.04 run leaves on PVE, reduced to the keys 02 reads
+# back. `status: stopped` and `template: 1` are the two the guards turn on.
+TPL_2604 = """\
+cores: 2
+ide2: local-zfs:vm-2604-cloudinit,media=cdrom
+memory: 4096
+name: ubuntu26.04Tpl
+net0: virtio=BC:24:11:31:ED:B9,bridge=vmbr1
+scsi0: local-zfs:base-2604-disk-0,size=20G
+scsihw: virtio-scsi-pci
+status: stopped
+tags: template;ubuntu26.04
+template: 1
+"""
+
+
+# (workflow file, OS input, extra env, expectation, [options])
 #   expectation "ok"    -> every run: step must succeed, scripts must parse
 #   expectation "fails" -> the first run: step must fail with a "not
 #                          implemented" style message, and no .sh may be left
+#   options is an optional dict:
+#     "seed"    {filename: content} written into the case dir before the step
+#                runs -- this is where the fake PVE's template lands
+#     "execute" [script, ...] run each generated script with bash INSTEAD of
+#                only `bash -n`-ing it. 02's step pipes setup_vms.sh into
+#                `ssh ... 'bash -s'`, and ssh is a stub, so without this the
+#                script is never executed and its ~40 lines of assertions
+#                are never run at all.
 CASES = [
     ("01a-setup-vm-os-template-deb.yml", "ubuntu24.04",
      {"VM_ID": "2404", "ubuntu_ver": "24.04"}, "ok"),
     ("01a-setup-vm-os-template-deb.yml", "ubuntu22.04",
      {"VM_ID": "2204", "ubuntu_ver": "22.04"}, "ok"),
+    # 2604 is the template 02 clones from, and it was the one release 01a
+    # offered but gencheck never exercised
+    ("01a-setup-vm-os-template-deb.yml", "ubuntu26.04",
+     {"VM_ID": "2604", "ubuntu_ver": "26.04"}, "ok"),
     ("01a-setup-vm-os-template-deb.yml", "debian13",
      {"VM_ID": "2113", "DEBIAN_VERSION": "13", "DEBIAN_NAME": "trixie"}, "ok"),
     ("01a-setup-vm-os-template-deb.yml", "debian12",
@@ -88,7 +264,34 @@ CASES = [
     ("01c-setup-vm-os-template-other.yml", "gentoo",
      {"VM_ID": "2999"}, "fails"),
     ("01-setup-vm-os-template.yml", "ubuntu24.04", {}, "fails"),
+
+    # 02 used to have no coverage at all, and it is the one workflow whose
+    # whole job is to assert on what it just did to PVE.
+    ("02-create-vms.yml", "ubuntu26.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "ok", {"seed": {"cfg-2604": TPL_2604}, "execute": ["setup_vms.sh"]}),
+    # not a template -> refuse to clone a live VM
+    ("02-create-vms.yml", "ubuntu26.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "fails", {"seed": {"cfg-2604": TPL_2604.replace("template: 1\n", "")},
+               "execute": ["setup_vms.sh"]}),
+    # no tags -> refuse rather than clone into an empty --tags
+    ("02-create-vms.yml", "ubuntu26.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "fails", {"seed": {"cfg-2604": TPL_2604.replace("tags: template;ubuntu26.04\n", "")},
+               "execute": ["setup_vms.sh"]}),
+    # the VMs come up but the guests never answer ssh -> that is a failure,
+    # not a pass. This is the check run #9 did not have.
+    ("02-create-vms.yml", "ubuntu26.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "fails", {"seed": {"cfg-2604": TPL_2604, "ssh-down": ""},
+               "execute": ["setup_vms.sh"]}),
+    # an unknown template name must not reach `qm clone` as an empty id
+    ("02-create-vms.yml", "ubuntu99.04",
+     {"vm_prefix": "k8s-", "ip_list": "11,101,102", "vm_user": "vagrant"},
+     "fails", {"seed": {"cfg-2604": TPL_2604}}),
 ]
+
 
 # An UNQUOTED heredoc body is expanded by the runner while it generates the
 # script. A `${NAME}` in there that is not a runner-side variable therefore has
@@ -100,10 +303,21 @@ HEREDOC_OPEN = re.compile(r"<<(-?)(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 VALUES = {
     "github.event.inputs.OS": None,      # filled in per case
+    "github.event.inputs.vm_template": None,  # 02 spells the same choice differently
     "github.event.inputs.runner": "ubuntu-latest",
     "github.event.inputs.STORAGE": "local-zfs",
+    "github.event.inputs.vm_prefix": "k8s-",
+    "github.event.inputs.ip_list": "11,101,102",
+    "github.event.inputs.vm_user": "vagrant",
     "env.TAILSCALE_HOST": "pve",
     "env.TAILSCALE_NET": "taile80cb.ts.net",
+    # 02 reads these back out of $GITHUB_ENV, so the runner has to bake the
+    # literals in. VM_TEMPLATE_ID is what "Get VM Template ID" resolves
+    # ubuntu26.04 to; the other three are copied from the dispatch inputs.
+    "env.VM_TEMPLATE_ID": "2604",
+    "env.VM_PREFIX": "k8s-",
+    "env.VM_USER": "vagrant",
+    "env.CIDR": "10.10.10",
 }
 
 EXPR = re.compile(r"\$\{\{\s*([^}]+?)\s*\}\}")
@@ -122,7 +336,7 @@ VAR_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def subst(text, os_input):
     def repl(m):
         key = m.group(1)
-        if key == "github.event.inputs.OS":
+        if key in ("github.event.inputs.OS", "github.event.inputs.vm_template"):
             return os_input
         if key not in VALUES:
             raise SystemExit(f"unmapped workflow expression: {key}")
@@ -163,7 +377,11 @@ def make_prelude(d):
     with open(prelude, "w", newline="\n") as fh:
         for name in STUBS:
             fh.write(f"{name}() {{ :; }}\n")
-        fh.write("readonly -f " + " ".join(STUBS) + "\n")
+        fh.write(FAKE_PVE)
+        fh.write("\nreadonly -f " + " ".join(STUBS) + "\n")
+        for name in ("qm", "pct", "ssh", "sshpass",
+                     "FAKE_CFG", "FAKE_UPSERT", "FAKE_DROP"):
+            fh.write(f"readonly -f {name}\n")
     return prelude
 
 
@@ -238,7 +456,11 @@ def leaked_runner_vars(fn, content, runner_only):
     return bad
 
 
-def run_case(wf_name, os_input, extra_env, expectation):
+def run_case(wf_name, os_input, extra_env, expectation, opts=None):
+    opts = opts or {}
+    seed = opts.get("seed") or {}
+    execute = opts.get("execute") or []
+
     with open(os.path.join(WF_DIR, wf_name), encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
 
@@ -246,18 +468,29 @@ def run_case(wf_name, os_input, extra_env, expectation):
     job = next(iter(jobs.values()))
     steps = job.get("steps") or []
 
-    label = f"{wf_name} / {os_input}"
+    label = f"{wf_name} / {os_input}" + (f" [{opts['why']}]" if opts.get("why") else "")
     problems = []
     made = []
 
     d = tempfile.mkdtemp(prefix="gencheck-")
     try:
+        # the fake PVE keeps its per-VM state as cfg-<vmid> files in here
+        for fn, content in seed.items():
+            with open(os.path.join(d, fn), "w", newline="\n") as fh:
+                fh.write(content)
+
         env = dict(os.environ)
         env["BASH_ENV"] = make_prelude(d)
         env["GITHUB_ENV"] = os.path.join(d, "github_env")
+        # 02's "Check if already ssh key-based" writes to $GITHUB_OUTPUT. Left
+        # unset, `>> $GITHUB_OUTPUT` is an ambiguous redirect and the step exits
+        # 1 -- which reads as "the ssh probe failed" rather than "the harness
+        # forgot a file".
+        env["GITHUB_OUTPUT"] = os.path.join(d, "github_output")
         env["STORAGE"] = "local-zfs"
         env["CIDR"] = "10.10.10"
         env["DNS"] = "223.5.5.5"
+        env["FAKE_PVE"] = d
         env.update(extra_env)
 
         guard_ran = False
@@ -280,18 +513,22 @@ def run_case(wf_name, os_input, extra_env, expectation):
                                cwd=d, env=env, capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
             if r.returncode != 0:
-                if expectation == "fails":
+                if expectation == "fails" and not execute:
                     if "not implemented" not in r.stdout:
                         problems.append(
                             f"{name}: expected a 'not implemented' message, got:\n{r.stdout[:400]}")
                     return label, made, problems, True
                 problems.append(f"{name}: exit {r.returncode}\n{r.stdout[-800:]}")
                 return label, made, problems, False
-            if expectation == "fails":
+            # A case that declares `execute` is expecting the failure to come
+            # out of the generated script, not out of the step that writes it:
+            # 02's step is `cat setup_vms.sh | ssh ... 'bash -s'`, so it
+            # succeeds at generating the script and the refusal happens later.
+            if expectation == "fails" and not execute:
                 problems.append(f"{name}: was expected to fail but exited 0")
                 return label, made, problems, False
 
-        if expectation == "fails":
+        if expectation == "fails" and not execute:
             if not guard_ran:
                 problems.append("no step matched the OS, so nothing failed")
             return label, made, problems, False
@@ -311,14 +548,43 @@ def run_case(wf_name, os_input, extra_env, expectation):
             # a heredoc that never terminated shows up as a stray EOF marker
             if re.search(r"^EOF$", content, re.M):
                 problems.append(f"{fn}: heredoc terminator leaked into output")
-            if fn.endswith("_tpl.sh"):
+            # A script this case actually runs on the PVE host is held to the
+            # same "no unexpanded runner variables" rule as a *_tpl.sh, for
+            # the same reason: `${ALINUX3_IMAGE}` is valid bash whether or
+            # not anything assigns it, and setup_vms.sh does run over there.
+            if fn.endswith("_tpl.sh") or fn in execute:
                 problems.extend(leaked_runner_vars(fn, content, runner_only))
             c = subprocess.run([BASH, "-n", path], capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
             if c.returncode != 0:
                 problems.append(f"{fn}: bash -n failed\n{c.stderr.strip()}")
+                continue
+
+            if fn in execute:
+                e = subprocess.run([BASH, path], cwd=d, env=env,
+                                   capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace")
+                if expectation == "fails":
+                    if e.returncode == 0:
+                        problems.append(
+                            f"{fn}: was expected to refuse, but it ran to "
+                            f"completion -- the guard it is supposed to make is "
+                            f"not firing"
+                        )
+                elif e.returncode != 0:
+                    problems.append(
+                        f"{fn}: exit {e.returncode} against the fake PVE\n"
+                        f"--- stdout tail ---\n{e.stdout[-2500:]}\n"
+                        f"--- stderr tail ---\n{e.stderr[-1500:]}")
+                made.append((fn, len(content.splitlines()), e.returncode))
             else:
                 made.append((fn, len(content.splitlines())))
+
+        for fn in execute:
+            if not os.path.exists(os.path.join(d, fn)):
+                problems.append(
+                    f"{fn}: the case says to run it, but the step never "
+                    f"generated it")
         if not made:
             problems.append("no scripts were generated -- the dispatch did nothing")
         # NOTE: this used to `return ..., True` unconditionally, which silently
@@ -334,8 +600,10 @@ def run_case(wf_name, os_input, extra_env, expectation):
 def main():
     failed = 0
     total = 0
-    for wf_name, os_input, extra, expectation in CASES:
-        label, made, problems, ok = run_case(wf_name, os_input, extra, expectation)
+    for case in CASES:
+        wf_name, os_input, extra, expectation = case[:4]
+        opts = case[4] if len(case) > 4 else None
+        label, made, problems, ok = run_case(wf_name, os_input, extra, expectation, opts)
         total += 1
         if not ok:
             failed += 1
@@ -343,10 +611,14 @@ def main():
             for p in problems:
                 print(f"       {p}")
         elif expectation == "fails":
-            print(f"  ok   {label}  -> refused as expected")
+            ran = ", ".join(n for n, *_ in made) or "nothing"
+            print(f"  ok   {label}  -> refused as expected ({ran})")
         else:
-            names = ", ".join(f"{n} ({v} lines)" for n, v in made)
-            print(f"  ok   {label}  -> {names}")
+            def describe(m):
+                if len(m) > 2:
+                    return f"{m[0]} ({m[1]} lines, exit {m[2]})"
+                return f"{m[0]} ({m[1]} lines)"
+            print(f"  ok   {label}  -> {', '.join(describe(m) for m in made)}")
     print(f"\n{total - failed}/{total} dispatch case(s) passed")
     return 1 if failed else 0
 

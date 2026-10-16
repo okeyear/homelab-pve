@@ -113,7 +113,18 @@ jobs:
           20000 archlinux
           EOF
           temp_id=$(grep "\s${{ github.event.inputs.vm_template }}$" versions.txt | awk '{print $1}')
+          # An unknown name has to stop the run here. Without this,
+          # VM_TEMPLATE_ID is the empty string and the script below runs
+          # `qm clone  1011` three times: three failures, zero VMs, and
+          # a green run -- the same silent-failure shape the 01a/01b/01c
+          # guard steps exist to remove.
+          if [ -z "$temp_id" ]; then
+            echo "::error::no VM ID is mapped to '${{ github.event.inputs.vm_template }}' in versions.txt"
+            echo "::error::known names: $(awk 'NF {printf "%s ", $2}' versions.txt)"
+            exit 1
+          fi
           echo "VM_TEMPLATE_ID=$temp_id"      >> "$GITHUB_ENV"
+          echo "resolved ${{ github.event.inputs.vm_template }} -> VM $temp_id"
 
       - name: Install tools
         run: sudo apt-get update -yq && sudo apt-get install -yq sshpass
@@ -153,32 +164,198 @@ jobs:
           # ssh root@${{ env.TAILSCALE_HOST }}.${{ env.TAILSCALE_NET }} "qm list"
 
           cat > setup_vms.sh <<'EOF'
-          # k8s controlplane 4C8G & worker node 8C12G
-          # for i in ${{ env.MASTER_IP }} ${{ env.NODE01_IP }} ${{ env.NODE02_IP }}
+          # Create the k8s VMs by cloning a sealed template.
+          #
+          # set -e is the whole point of this rewrite. Run #9 of this
+          # workflow was green and proved nothing: a failed `qm clone` or
+          # `qm start` did not stop the loop, the step exited 0, and
+          # three missing VMs looked like a pass. Every command that may
+          # legitimately fail on a first run therefore carries an
+          # explicit `|| true`, so the next real failure is not
+          # swallowed along with them.
+          set -euo pipefail
+
+          # The runner already substituted the workflow variables into
+          # this file; nothing below is expanded on the runner again.
+          VM_TEMPLATE_ID=${{ env.VM_TEMPLATE_ID }}
+          VM_PREFIX=${{ env.VM_PREFIX }}
+          VM_USER=${{ env.VM_USER }}
+          CIDR=${{ env.CIDR }}
+          DISK_SIZE=40G
+
+          # A single-digit IP is the controlplane, the rest are workers.
+          # The comment that used to sit here claimed 4C8G / 8C12G and
+          # had never matched the code below it.
+          cores_for() { if [ "$1" -ge 10000 ]; then echo 4; else echo 2; fi; }
+          mem_for()   { if [ "$1" -ge 10000 ]; then echo 8192; else echo 4096; fi; }
+
+          # Every clone's tags are read off the template that is
+          # actually being cloned. Run #9 read them off a hardcoded
+          # `qm config 2009` -- the alinux9 template -- and shipped
+          # three Ubuntu 26.04 VMs tagged `almalinux9;k8s-`, so anything
+          # downstream that selects VMs by tag was silently wrong.
+          tpl_cfg=$(qm config "$VM_TEMPLATE_ID")
+          if [ "$(printf '%s\n' "$tpl_cfg" | awk '/^template:/ {print $2}')" != "1" ]; then
+            echo "::error::VM $VM_TEMPLATE_ID is not marked as a template; qm clone would copy a live VM"
+            printf '%s\n' "$tpl_cfg" | sed 's/^/::error::   /'
+            exit 1
+          fi
+          tags=$(printf '%s\n' "$tpl_cfg" | awk '/^tags:/ {print $2}' | sed "s@template@${VM_PREFIX}@")
+          if [ -z "$tags" ]; then
+            echo "::error::VM $VM_TEMPLATE_ID carries no tags; refusing to clone into empty tags"
+            printf '%s\n' "$tpl_cfg" | sed 's/^/::error::   /'
+            exit 1
+          fi
+          echo "template $VM_TEMPLATE_ID -> tags '$tags'"
+
+          GUEST_IPS=""
+          GUEST_VMS=""
+          CREATED=0
           ips=${{ github.event.inputs.ip_list }}
           arr=(${ips//,/ })
           for i in ${arr[*]}
           do
             VM_ID=10${i##*.}
-            echo VM_ID $VM_ID
-            # CIDR=${i%.*} # '192.168.168' vmbr0 vmbr1 的网段
-            echo CIDR ${{ env.VM_USER }}
-            pct destroy ${VM_ID} --force
-            qm shutdown ${VM_ID} --forceStop
+            VM_NAME="${VM_PREFIX}node${VM_ID}"
+            VM_IP="${CIDR}.${i}"
+            echo "=== creating VM ${VM_ID} (${VM_NAME}) at ${VM_IP} ==="
+
+            # A same-numbered LXC container is not something this
+            # workflow ever creates. The `pct destroy` that used to sit
+            # here only ever printed "Configuration file
+            # nodes/pve/lxc/<id>.conf does not exist", three times a run.
+            if pct status ${VM_ID} >/dev/null 2>&1; then
+              pct destroy ${VM_ID} --force
+            fi
+
+            # Not existing yet is the normal case on a first run, so
+            # these two must not abort the loop. Silence them instead of
+            # letting the error text scroll by as if it meant something.
+            qm shutdown ${VM_ID} --forceStop >/dev/null 2>&1 || true
             sleep 2
-            qm destroy ${VM_ID} --purge
-            qm clone ${{ env.VM_TEMPLATE_ID }} $VM_ID --full # 完整克隆还是链接克隆
-            qm set $VM_ID --core $(test $VM_ID -ge 10000 && echo 4 || echo 2) \
-                      --memory $(test $VM_ID -ge 10000 && echo 8192 || echo 4096) --name ${{ env.VM_PREFIX }}node${VM_ID}
-            qm set $VM_ID --ipconfig0 ip=${{ env.CIDR }}.${i}/24,gw=${{ env.CIDR }}.1  # 设置ip
-            qm set $VM_ID --cipassword vagrant --ciuser ${{ env.VM_USER }} # 设置用户和密码。注意密码在设置之后，会自动隐藏。
-            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "${{ env.CIDR }}.${i}"
-            qm disk resize $VM_ID scsi0 40G # 设置硬盘
-            tags=$(qm config 2009 | grep tag | awk '{print $2}' | sed "s@template@${{ env.VM_PREFIX }}@" )
-            # qm set $VM_ID --delete tags
-            qm set $VM_ID --tags "$tags"
-            qm start $VM_ID
+            qm destroy ${VM_ID} --purge >/dev/null 2>&1 || true
+
+            qm clone "$VM_TEMPLATE_ID" "$VM_ID" --full
+            qm set  "$VM_ID" --core "$(cores_for $VM_ID)" --memory "$(mem_for $VM_ID)" --name "$VM_NAME"
+            qm set  "$VM_ID" --ipconfig0 "ip=${VM_IP}/24,gw=${CIDR}.1"
+            qm set  "$VM_ID" --cipassword vagrant --ciuser "$VM_USER"
+            # Every clone inherits the template's host key, so this
+            # address is a stale known_hosts entry from the last clone.
+            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$VM_IP" >/dev/null 2>&1 || true
+            qm disk resize "$VM_ID" scsi0 "$DISK_SIZE"
+            qm set  "$VM_ID" --tags "$tags"
+            qm start "$VM_ID"
+
+            # ---------- post-creation verification, per VM ----------
+            # `qm set` printing "update VM ..." is not evidence that the
+            # value took, and a resize prints nothing at all on success.
+            # Read every value back out and fail loudly on a mismatch.
+            running=0
+            for _ in $(seq 1 30); do
+              st=$(qm status "$VM_ID" 2>/dev/null || true)
+              if [ "$st" = "status: running" ]; then running=1; break; fi
+              sleep 2
+            done
+            if [ "$running" -ne 1 ]; then
+              echo "::error::VM ${VM_ID} never reached 'status: running' (last said: '${st}')"
+              qm config "$VM_ID" 2>/dev/null | sed 's/^/::error::   /' || true
+              exit 1
+            fi
+
+            cfg=$(qm config "$VM_ID")
+            printf '%s\n' "$cfg"
+
+            fail=0
+            # check <label> <expected> <ERE tested against the config>
+            # A herestring, not `printf | grep -q`: grep -q exits the
+            # moment it matches, and under `set -o pipefail` the writer
+            # then dies of SIGPIPE and the whole pipeline reports 141,
+            # which would turn a passing check into a failing one.
+            check() {
+              if grep -qE "$3" <<<"$cfg"; then
+                echo "ok   ${VM_ID} $1 = $2"
+              else
+                echo "::error::VM ${VM_ID} $1 is not '$2' (wanted /$3/)"
+                printf '%s\n' "$cfg" | sed 's/^/::error::   /'
+                fail=1
+              fi
+            }
+            check name   "$VM_NAME"            "^name: ${VM_NAME}\$"
+            check cores  "$(cores_for $VM_ID)" "^cores: $(cores_for $VM_ID)\$"
+            check memory "$(mem_for $VM_ID)"   "^memory: $(mem_for $VM_ID)\$"
+            check disk   "$DISK_SIZE"          "^scsi0: .*,size=${DISK_SIZE}( |\$)"
+            check ip     "${VM_IP}/24"         "ip=${VM_IP}/24,"
+            check gw     "${CIDR}.1"           "gw=${CIDR}\.1\$"
+            check ciuser "$VM_USER"            "^ciuser: ${VM_USER}\$"
+            check tags   "$tags"               "^tags: ${tags}\$"
+            if [ "$fail" -ne 0 ]; then
+              echo "::error::VM ${VM_ID} was created but does not match what was asked for"
+              exit 1
+            fi
+
+            GUEST_IPS="${GUEST_IPS} ${VM_IP}"
+            GUEST_VMS="${GUEST_VMS} ${VM_ID}:${VM_IP}"
+            CREATED=$((CREATED + 1))
           done
+
+          wanted=$(echo $ips | tr ',' ' ' | wc -w)
+          if [ "$CREATED" -ne "$wanted" ]; then
+            echo "::error::ip_list '${ips}' asked for ${wanted} VMs but only ${CREATED} were verified"
+            exit 1
+          fi
+
+          # ---------- guest reachability ----------
+          # The checks above prove the VMs were *configured*. They cannot
+          # prove the clones booted, that cloud-init ran, or that the
+          # template's ssh key reached the guest -- which is exactly
+          # where a template goes wrong and exactly what a green run
+          # hides. The guests boot in parallel, so probe them together.
+          # Key auth first (the template carries --sshkey), password via
+          # sshpass as the fallback (01a sets PasswordAuthentication yes
+          # together with --cipassword).
+          probe() {
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o ConnectTimeout=5 -o BatchMode=yes "${VM_USER}@${1}" true 2>/dev/null; then
+              return 0
+            fi
+            if command -v sshpass >/dev/null 2>&1; then
+              if sshpass -p vagrant ssh -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+                    "${VM_USER}@${1}" true 2>/dev/null; then
+                return 0
+              fi
+            fi
+            return 1
+          }
+
+          guest_ok=0
+          for ip in ${GUEST_IPS}; do
+            if probe "$ip"; then
+              echo "guest ${VM_USER}@${ip} reachable"
+              guest_ok=$((guest_ok + 1))
+            else
+              echo "::warning::guest ${VM_USER}@${ip} did not answer ssh"
+            fi
+          done
+          if [ "$guest_ok" -ne "$CREATED" ]; then
+            echo "::error::only ${guest_ok} of ${CREATED} guests answered ssh; the VMs exist but are not usable"
+            echo "::error::check in this order:"
+            echo "::error::  1. does template ${VM_TEMPLATE_ID} still carry --sshkey?"
+            echo "::error::  2. was it sealed with ciupgrade 1? A clone of a template whose"
+            echo "::error::     ciupgrade was already consumed never re-runs cloud-init, so"
+            echo "::error::     no user and no key ever appear."
+            echo "::error::  3. did the guest's cloud-init fail outright?"
+            for pair in ${GUEST_VMS}; do
+              echo "::error::--- VM ${pair%%:*} at ${pair##*:} ---"
+              qm config "${pair%%:*}" 2>/dev/null | sed 's/^/::error::   /' || true
+              qm cloudinit dump "${pair%%:*}" user 2>/dev/null | tail -20 | sed 's/^/::error::   /' || true
+            done
+            qm list
+            exit 1
+          fi
+
+          echo "=== all ${CREATED} VMs created and verified ==="
+          qm list
           EOF
 
           cat setup_vms.sh
