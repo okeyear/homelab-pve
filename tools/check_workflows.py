@@ -37,6 +37,7 @@ ACTION_DIRS = [REPO / ".github" / "actions", REPO / "pipeline-template" / "actio
 # the note in gencheck.py: only the launcher puts its own /usr/bin on PATH.
 _WINDOWS_BASH = (
     r"C:\Program Files\Git\bin\bash.exe",
+    r"D:\Program Files\Git\bin\bash.exe",
     r"D:\bin\PortableGit\bin\bash.exe",
 )
 BASH = (os.environ.get("BASH") or shutil.which("bash")

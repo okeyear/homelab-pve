@@ -39,6 +39,7 @@ WF_DIR = os.path.join(REPO, ".github", "workflows")
 # CI runs in a Debian slim image and finds a normal bash either way.
 _WINDOWS_BASH = (
     r"C:\Program Files\Git\bin\bash.exe",
+    r"D:\Program Files\Git\bin\bash.exe",
     r"D:\bin\PortableGit\bin\bash.exe",
 )
 BASH = (os.environ.get("BASH") or shutil.which("bash")
