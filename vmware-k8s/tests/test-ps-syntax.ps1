@@ -60,6 +60,43 @@ Get-CheckedScripts | ForEach-Object {
 }
 
 Write-Host ''
+Write-Host '=== 相邻字符串字面量 ==='
+# PowerShell 不会像 C 那样自动拼接相邻的字符串字面量。'a\'"b" 会被当成
+# **两个参数**传给命令 —— 写 Join-Path 的话就是收到三个参数,报
+# "A positional parameter cannot be found that accepts argument 'b'"。
+#
+# 这个坑很难靠读代码看出来(看着挺像拼接),但一跑就炸,而且往往炸在
+# 流程的最后一步。这里用 AST 找"紧挨着的两个字符串字面量参数"。
+Get-CheckedScripts | ForEach-Object {
+    $path = $_.FullName
+    $tokens = $null
+    $errs = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $path, [ref]$tokens, [ref]$errs)
+    $hits = @()
+    $cmds = $ast.FindAll({
+        param($n) $n -is [System.Management.Automation.Language.CommandAst]
+    }, $true)
+    foreach ($c in $cmds) {
+        $elems = $c.CommandElements
+        for ($i = 1; $i -lt $elems.Count; $i++) {
+            $a = $elems[$i - 1]
+            $b = $elems[$i]
+            $aIsStr = ($a -is [System.Management.Automation.Language.StringConstantExpressionAst]) -or
+                      ($a -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
+            $bIsStr = ($b -is [System.Management.Automation.Language.StringConstantExpressionAst]) -or
+                      ($b -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
+            if (-not ($aIsStr -and $bIsStr)) { continue }
+            # 中间一个空格都没有才算 —— 有空格的可能是故意传两个参数
+            if ($a.Extent.EndOffset -ne $b.Extent.StartOffset) { continue }
+            $hits += "第 $($b.Extent.StartLineNumber) 行: $($c.Extent.Text.Trim())"
+        }
+    }
+    Assert-True ($hits.Count -eq 0) ("{0} 里没有相邻的字符串字面量" -f $_.Name)
+    foreach ($h in $hits) { Write-Host "       $h" -ForegroundColor DarkGray }
+}
+
+Write-Host ''
 Write-Host '=== 行尾 ==='
 # .ps1 用 CRLF 或 LF 都可以(PowerShell 两个都吃),但同一目录里
 # 混着会让 git diff 很难看。这里只报告,不失败。

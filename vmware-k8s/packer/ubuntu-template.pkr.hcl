@@ -45,9 +45,16 @@ variable "disk_gb" {
   default = 20
 }
 
-variable "vmware_version" {
+variable "vmware_hardware_version" {
   type    = string
-  default = "25"
+  default = "21"
+  # 说明:这是**虚拟硬件版本号**(virtualHW.version),不是 Workstation 的
+  # 产品版本 —— 两套号完全不是一回事:产品版本是 17.6 / 25.0.1 这种,
+  # 虚拟硬件版本是 19 / 20 / 21 这种全局递增号。填错了 VMware 会弹
+  # "created by a VMware product that is incompatible" 然后拒绝打开。
+  #
+  # 21 是 packer 插件自己的默认值(下限 19),兼容性最好。
+  # 本机 Workstation 25.0.1 实测 19~25 都能开,21 最稳。
 }
 
 variable "ssh_username" {
@@ -84,7 +91,7 @@ source "vmware-iso" "ubuntu" {
   # 已经去掉了这个参数,Workstation 的安装路径由插件自己探测 ——
   # packer validate 会直接报 "An argument named vmware_path is not
   # expected here"。
-  version          = var.vmware_version
+  version          = var.vmware_hardware_version
   output_directory = "output"
   vm_name          = var.vm_name
 
@@ -97,25 +104,60 @@ source "vmware-iso" "ubuntu" {
   disk_size            = var.disk_gb * 1024
   disk_type_id         = "0" # 0 = 可增长
 
-  headless  = true
-  boot_wait = "10s"
+  # headless = false:让 VMware 的窗口显示出来。
+  #
+  # 这一条是为了"看得见" —— autoinstall 出问题的时候,屏幕上通常就
+  # 明明白白写着原因(找不到 user-data、ds 写错、GRUB 没进命令行模式),
+  # 比对着日志猜强太多。build 成功之后窗口自己关掉。
+  # 跑在没有桌面的机器上时改回 true。
+  headless  = false
+  boot_wait = "20s"
 
   # autoinstall(subiquity)从 http 拿 user-data / meta-data。
   # .HTTPIP 是宿主机在 vmnet 上的地址,模板能直接访问。
   http_directory = var.http_dir
+
+  # ---- GRUB 按键序列 ----------------------------------------------------
+  #
+  # Ubuntu 22.04 及以后的 live-server ISO **不能**在 GRUB 菜单里直接敲
+  # "autoinstall ..." —— 那样 GRUB 把整行当菜单操作,系统会进到交互式
+  # 安装界面停住不动。正确做法是进 GRUB 命令行模式,手动把内核和
+  # initramfs 加载起来。HashiCorp 官方的 iso-vars.pkr.hcl 也是这么写的。
+  #
+  # 26.04 的 /boot/grub/grub.cfg 实际内容(从 ISO 里读出来的,不是猜的):
+  #
+  #     set timeout=30
+  #     menuentry "Try or Install Ubuntu Server" {
+  #         set gfxpayload=keep
+  #         linux  /casper/vmlinuz  ---
+  #         initrd /casper/initrd
+  #     }
+  #
+  # 所以有两条硬约束:
+  #   1. timeout=30 —— 30 秒后会自动引导,必须在这之前按 <esc> 打断。
+  #   2. 内核参数要接在 "---" **后面**(那是 initramfs 参数的位置,
+  #      subiquity 就住在 initramfs 里),initrd 的路径是 /casper/initrd。
+  #
+  # ds 的值必须用单引号包起来:分号在 GRUB 里是**命令分隔符**,
+  # 不包起来的话 "ds=nocloud-net;s=http://..." 会被截成两条命令,
+  # 内核只拿到 ds=nocloud-net,装到一半找不到 user-data,而且报错
+  # 指向 cloud-init,跟真正的病因隔着十万八千里。
   boot_command = [
     "<esc><wait>",
-    "autoinstall ds=nocloud-net;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/",
-    "<f10><wait>",
-    "<enter>"
+    "c<wait>",
+    "linux /casper/vmlinuz --- autoinstall ip=dhcp ds='nocloud-net;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/'<enter>",
+    "initrd /casper/initrd<enter>",
+    "boot<enter>"
   ]
 
   communicator         = "ssh"
   ssh_username         = var.ssh_username
   ssh_password         = var.ssh_password
   ssh_private_key_file = var.ssh_private_key_file
-  ssh_timeout          = "60m"
-  ssh_port             = 22
+  # 40 分钟:无人值守安装本身 10-20 分钟够用,超时的多半是哪里没配对
+  # (GRUB 没进命令行模式 / 拿不到 user-data),早点失败早点能看见屏幕上的报错
+  ssh_timeout = "40m"
+  ssh_port    = 22
 
   shutdown_command = "echo 'vagrant' | sudo -S shutdown -P now"
 

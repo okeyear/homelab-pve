@@ -82,19 +82,42 @@ if (-not $uv) {
     Write-Host '  [skip] 找不到 uv,跳过 YAML 解析校验' -ForegroundColor Yellow
 }
 else {
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $out = & $uv run --python 3.12 --with pyyaml --no-project `
-            python -c "import sys,yaml; d=yaml.safe_load(open(sys.argv[1],encoding='utf-8')); print('|'.join(sorted(d['autoinstall'].keys())))" $tmp 2>&1
-        $code = $LASTEXITCODE
+    $pyCode = "import sys,yaml; d=yaml.safe_load(open(sys.argv[1],encoding='utf-8')); print('|'.join(sorted(d['autoinstall'].keys())))"
+
+    # 这个检查要现装 pyyaml,离不开 pypi。国内直连 pypi 经常抽风,
+    # 所以:先走默认源,失败了换清华镜像再来一次。
+    # 两次都是网络问题,就跳过这一项(不算失败)—— 网络不通不是代码的锅。
+    # 但要是 YAML 真的解析错了,照样红。
+    $attempts = @(
+        @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project'); Name = '默认 pypi' },
+        @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project',
+                    '--index-url', 'https://pypi.tuna.tsinghua.edu.cn/simple'); Name = '清华镜像' }
+    )
+
+    $parsed = $false
+    $outText = ''
+    $lastOut = $null
+    foreach ($a in $attempts) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $lastOut = & $uv @($a.Args) python -c $pyCode $tmp 2>&1
+            $code = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $prev
+        }
+        $outText = ($lastOut | ForEach-Object { $_.ToString() }) -join "`n"
+        if ($code -eq 0) { $parsed = $true; break }
+        if ($outText -match 'Failed to fetch|Request failed|network|Connection|Temporary failure|SSL') {
+            Write-Host "  [.. ] $($a.Name) 拉不动 pyyaml,换下一个源" -ForegroundColor DarkGray
+            continue
+        }
+        break   # 不是网络问题,就是 YAML 本身错了
     }
-    finally {
-        $ErrorActionPreference = $prev
-    }
-    $total++
-    $outText = ($out | ForEach-Object { $_.ToString() }) -join "`n"
-    if ($code -eq 0) {
+
+    if ($parsed) {
+        $total++
         Write-Host "  ok   $outText" -ForegroundColor Green
         # late-commands 是模板能不能用的关键:它负责免密 sudo、
         # machine-id / SSH host key 重置。被注释掉的话,subiquity 会
@@ -108,9 +131,14 @@ else {
             $failed++
         }
     }
+    elseif ($outText -match 'Failed to fetch|Request failed|network|Connection|Temporary failure|SSL') {
+        Write-Host '  [skip] 两个源都拉不到 pyyaml,跳过 YAML 解析校验(网络问题,不是代码问题)' -ForegroundColor Yellow
+        $lastOut | Select-Object -First 3 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+    }
     else {
+        $total++
         Write-Host '  FAIL YAML 解析失败:' -ForegroundColor Red
-        $out | ForEach-Object { Write-Host "       $_" }
+        $lastOut | ForEach-Object { Write-Host "       $_" }
         $failed++
     }
 }

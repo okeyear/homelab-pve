@@ -48,8 +48,8 @@ if (Test-Path -LiteralPath $packerSrc) {
 }
 
 # 每个会被改动的文件,先存一份原样,跑完一个负例就还原
-$mutatedFiles = @('lib\packer.ps1', 'lib\clone.ps1', 'lib\k8s.ps1', 'lib\common.ps1',
-                  'tests\test-packer-validate.ps1')
+$mutatedFiles = @('build.ps1', 'lib\packer.ps1', 'lib\clone.ps1', 'lib\k8s.ps1',
+                  'lib\common.ps1', 'tests\test-packer-validate.ps1')
 $pristine = @{}
 foreach ($f in $mutatedFiles) {
     $p = Join-Path $tree $f
@@ -63,13 +63,19 @@ function Restore-Tree {
     }
 }
 
-# M6 要改的原文里带单引号和双引号,手写转义太容易出错(反引号 + ${ 在
+# M6/M7 要改的原文里带单引号和双引号,手写转义太容易出错(反引号 + ${ 在
 # PowerShell 里有歧义),所以用单引号 here-string 原样带过来。
 $m6From = @'
 'CLUSTER_NAME=${CLUSTER_NAME:-"devops-k8s"}'
 '@
 $m6To = @'
 "CLUSTER_NAME=${CLUSTER_NAME:-""devops-k8s""}"
+'@
+$m7From = @'
+$templateVmx = Join-Path $WorkDir ('packer\output\ubuntu-template\' + $TemplateName + '.vmx')
+'@
+$m7To = @'
+$templateVmx = Join-Path $WorkDir 'packer\output\ubuntu-template\'"$TemplateName.vmx"
 '@
 
 # ---------------------------------------------------------------- 负例清单
@@ -133,6 +139,14 @@ $muts = @(
         To    = $m6To
         Test  = 'tests\test-k8s-config.ps1'
         Expect = 'CLUSTER_NAME'
+    }
+    @{
+        Name  = 'M7 相邻字符串字面量(Join-Path 会收到三个参数)'
+        File  = 'build.ps1'
+        From  = $m7From
+        To    = $m7To
+        Test  = 'tests\test-ps-syntax.ps1'
+        Expect = '相邻的字符串字面量'
     }
 )
 

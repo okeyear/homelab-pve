@@ -81,7 +81,11 @@ $VagrantPassword = 'vagrant'
 # VM 放哪儿。20G 一台的盘 + 模板,三个节点差不多 80G,别放 C 盘。
 $VmRoot = 'D:\vmware-k8s'
 $PackerVersion = ''            # 留空 = 自动取最新版
-$VmwareVersion = '25'          # VMware Workstation 大版本
+# 虚拟硬件版本号,**不是** Workstation 的产品版本(17.6 / 25.0.1 那种)。
+# 这两个号完全是两套。填错的话 VMware 会拒绝打开 VM,弹
+# "created by a VMware product that is incompatible"。
+# 21 = packer 插件的默认值,兼容性最好。
+$VmwareHardwareVersion = '21'
 
 # ==================================================================
 #  路径与库
@@ -256,7 +260,10 @@ function Invoke-BuildTemplate {
         [Parameter(Mandatory)][string]$VmwareDir
     )
 
-    $templateVmx = Join-Path $WorkDir 'packer\output\ubuntu-template\'"$TemplateName.vmx"
+    # 注意:PowerShell 不会像 C 那样自动拼接相邻的字符串字面量。
+    # 'a\'"b" 会被当成**两个参数**,Join-Path 于是收到三个,报
+    # "A positional parameter cannot be found that accepts argument 'b'"。
+    $templateVmx = Join-Path $WorkDir ('packer\output\ubuntu-template\' + $TemplateName + '.vmx')
     if ((Test-Path -LiteralPath $templateVmx) -and (-not $ForceTemplate)) {
         Write-Ok "模板已存在,复用: $templateVmx"
         return $templateVmx
@@ -272,10 +279,14 @@ function Invoke-BuildTemplate {
     # 整段 late-commands)。
     $pub = Read-Utf8Text "$SshKey.pub"
     $hash = Get-PasswordHash -Password $VagrantPassword
-    $httpDir = Join-Path $HttpDir 'http'
+    # 变量名不能叫 $httpDir —— PowerShell 的变量名**大小写不敏感**,
+    # $httpDir 和上面那个 $HttpDir 是同一个变量!这一行等于把 $HttpDir
+    # 又拼了一层 "http",后面 pkrvars 里的 http_dir 就变成了
+    # .cache/http/http/http,packer 根本找不到 user-data。
+    $userDataDir = Join-Path $HttpDir 'http'
     $null = New-AutoinstallUserData `
         -TemplatePath (Join-Path $WorkDir 'packer\http\user-data') `
-        -OutPath (Join-Path $httpDir 'user-data') `
+        -OutPath (Join-Path $userDataDir 'user-data') `
         -MetaDataPath (Join-Path $WorkDir 'packer\http\meta-data') `
         -PublicKey $pub `
         -PasswordHash $hash `
@@ -286,18 +297,23 @@ function Invoke-BuildTemplate {
     # 用有序字典拼,不要在 here-string 里手写插值:here-string 里的
     # $((...)/guest) 会被当成除法,而嵌套的引号和反斜杠也难读。
     $varsMap = [ordered]@{
-        iso_url              = $iso.Url
+        # 用**本地文件**,不让 packer 自己再去下载一遍。
+        # 镜像站对 packer 追加的 "?checksum=..." 查询串直接返 403,
+        # 于是 packer 报 "error downloading ISO: [bad response code: 403]"
+        # —— 其实 ISO 早就下好、校验过了,白折腾。
+        # go-getter 认 file:// 开头的本地路径。
+        iso_url              = (ConvertTo-PackerFileUrl $iso.Path)
         iso_checksum         = $iso.Checksum
         vm_name              = $TemplateName
         cpus                 = $TemplateCpu
         memory_mb            = $TemplateMemMB
         disk_gb              = $TemplateDiskGB
-        vmware_version       = $VmwareVersion
+        vmware_hardware_version = $VmwareHardwareVersion
         ssh_username         = $SshUser
         ssh_password         = $VagrantPassword
         ssh_private_key_file = ($SshKey -replace '\\', '/')
         guest_scripts_dir    = (($WorkDir -replace '\\', '/') + '/guest')
-        http_dir             = ((Join-Path $HttpDir 'http') -replace '\\', '/')
+        http_dir             = ($userDataDir -replace '\\', '/')
     }
     $vars = ($varsMap.GetEnumerator() | ForEach-Object { '{0,-22} = "{1}"' -f $_.Key, $_.Value }) -join "`n"
     $pkrvars = Join-Path $WorkDir 'packer\ubuntu-template.pkrvars.hcl'
@@ -310,15 +326,34 @@ function Invoke-BuildTemplate {
     # 原样把字面量传给 packer,packer 会报
     # "Could not guess format of $var"。
     Push-Location (Join-Path $WorkDir 'packer')
+    $packerOut = $null
+    $code = 1
     try {
-        & $PackerExe build '-var-file=ubuntu-template.pkrvars.hcl' '-color=false' '.'
-        $code = $LASTEXITCODE
+        # 原生命令往 stderr 写东西,在 $ErrorActionPreference='Stop' 下
+        # 会变成**终止性错误** —— packer 的报错正文就这么被吃掉了,
+        # 只剩一句"退出码 1",完全指不到真因(第一次跑就是这样:
+        # 真实原因是镜像站 403,而日志里啥都没有)。这里临时放宽,
+        # 把输出收下来,存一份日志,再打印出来。
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $packerOut = & $PackerExe build '-var-file=ubuntu-template.pkrvars.hcl' '-color=false' '.' 2>&1
+            $code = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $prev
+        }
     }
     finally {
         Pop-Location
     }
+    if ($packerOut) {
+        $text = ($packerOut | ForEach-Object { $_.ToString() }) -join "`n"
+        Write-Utf8Text (Join-Path $CacheDir 'packer-build.log') $text
+        $packerOut | ForEach-Object { Write-Host "  $_" }
+    }
     if ($code -ne 0) {
-        Stop-WithError "packer build 失败(退出码 $code)"
+        Stop-WithError "packer build 失败(退出码 $code),完整日志见 .cache\packer-build.log"
     }
     if (-not (Test-Path -LiteralPath $templateVmx)) {
         Stop-WithError "packer 说成功了,但没找到 $templateVmx"
@@ -426,7 +461,7 @@ if (& $run 'template') {
     $templateVmx = Invoke-BuildTemplate -PackerExe $packerExe -VmwareDir $vmwareDir
 }
 else {
-    $templateVmx = Join-Path $WorkDir 'packer\output\ubuntu-template\'"$TemplateName.vmx"
+    $templateVmx = Join-Path $WorkDir ('packer\output\ubuntu-template\' + $TemplateName + '.vmx')
 }
 
 if (& $run 'network') {

@@ -5,6 +5,27 @@
 
 Set-StrictMode -Version Latest
 
+function Select-Sha256Line {
+    <#
+      .SYNOPSIS
+        从 SHA256SUMS 的内容里挑出某个文件对应的那一行。
+      .DESCRIPTION
+        两种格式都得认,少认一种就查不到校验和:
+
+          <hash>  <filename>      HashiCorp 的 packer SHA256SUMS
+          <hash> *<filename>      GNU coreutils 的二进制模式(iso 就是这种)
+
+        之前只按 "\s+文件名" 匹配,遇到 Ubuntu 的 "*文件名" 一条都匹配不上,
+        于是报"没有 ubuntu-26.04.1 的条目" —— 明明就在那儿。
+    #>
+    param(
+        [Parameter(Mandatory)][string[]]$Lines,
+        [Parameter(Mandatory)][string]$FileName
+    )
+    $rx = "\s+\*?$([regex]::Escape($FileName))\s*$"
+    return ($Lines | Where-Object { $_ -match $rx } | Select-Object -First 1)
+}
+
 function Get-LatestPackerVersion {
     <#
       .SYNOPSIS
@@ -57,8 +78,8 @@ function Install-Packer {
     Invoke-Download -Uri "$base/$file" -OutFile $zip
     Invoke-Download -Uri "$base/packer_${Version}_SHA256SUMS" -OutFile $sums
 
-    # SHA256SUMS 里的行形如 "<hash>  <file>"
-    $line = Get-Content -LiteralPath $sums | Where-Object { $_ -match "\s+$([regex]::Escape($file))\s*$" } | Select-Object -First 1
+    # SHA256SUMS 里的行形如 "<hash>  <file>"(也兼容 "*<file>" 的写法)
+    $line = Select-Sha256Line -Lines (Get-Content -LiteralPath $sums) -FileName $file
     if (-not $line) {
         Stop-WithError "SHA256SUMS 里找不到 $file 的条目"
     }
@@ -145,8 +166,7 @@ function Resolve-UbuntuIso {
 
     # 校验和不匹配就删掉重下——半截的 ISO 在 packer 里会表现为一个
     # 莫名其妙的光盘错误,不如直接重来。
-    $line = Get-Content -LiteralPath $sumsPath |
-        Where-Object { $_ -match "\s+$([regex]::Escape($chosen))\s*$" } | Select-Object -First 1
+    $line = Select-Sha256Line -Lines (Get-Content -LiteralPath $sumsPath) -FileName $chosen
     if (-not $line) {
         Stop-WithError "SHA256SUMS 里没有 $chosen 的条目,无法校验"
     }
@@ -164,7 +184,13 @@ function Resolve-UbuntuIso {
     return [pscustomobject]@{
         Path     = $isoPath
         Url      = $isoUrl
-        Checksum = "file:$sumsPath"
+        # 直接给哈希值,不让 packer 自己解析 SHA256SUMS。
+        # 那个文件是 GNU 的 "<hash> *<file>" 格式,packer 的 file: 类型
+        # 未必认得那个星号 —— 认不得就会报
+        # "checksum file didn't contain expected hash",而哈希明明就在那儿。
+        # 反正上面已经自己校验过一遍了,把结果直接喂给它最省事。
+        Checksum = "sha256:$expected"
+        SumsPath = $sumsPath
         FileName = $chosen
     }
 }

@@ -46,6 +46,24 @@ function Write-Utf8Lines {
     [System.IO.File]::WriteAllLines($Path, $Lines, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+# ---------------------------------------------------------------- 路径
+
+function ConvertTo-PackerFileUrl {
+    <#
+      .SYNOPSIS
+        把本地路径转成 packer(底层是 go-getter)认的 file:// URL。
+      .DESCRIPTION
+        Windows 上要的是三斜杠形式:file:///C:/Users/...
+        go-getter 把 file:// 交给本地文件读取器,于是 packer 直接用
+        已经下好、校验过的 ISO,不会再自己去镜像站下一遍。
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $slashed = $full -replace '\\', '/'
+    if (-not $slashed.StartsWith('/')) { $slashed = '/' + $slashed }
+    return 'file://' + $slashed
+}
+
 # ---------------------------------------------------------------- 输出
 
 function Write-Step {

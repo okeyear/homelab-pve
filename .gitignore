@@ -7,3 +7,9 @@ __pycache__/
 vmware-k8s/.cache/
 # 测试跑完可能残留的临时文件(正常会被清掉,测试崩了就会留下)
 vmware-k8s/tests/_*
+# packer build 的产物:一张 20G 的模板盘 + 生成的变量文件 + manifest
+vmware-k8s/packer/output/
+vmware-k8s/packer/*.pkrvars.hcl
+vmware-k8s/packer/manifest.json
+# packer 自己的缓存(ISO 副本,又 2.7G)
+vmware-k8s/packer/packer_cache/

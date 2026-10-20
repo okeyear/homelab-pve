@@ -36,7 +36,7 @@ $vars = @(
     'cpus                 = 2',
     'memory_mb            = 2048',
     'disk_gb              = 20',
-    'vmware_version       = "25"',
+    'vmware_hardware_version = "21"',
     'ssh_username         = "vagrant"',
     'ssh_password         = "vagrant"',
     "ssh_private_key_file = `"$($env:USERPROFILE -replace '\\','/')/.ssh/id_rsa`"",
@@ -69,6 +69,36 @@ finally {
     Pop-Location
     Remove-Item -LiteralPath $varsPath -Force -ErrorAction SilentlyContinue
 }
+
+Write-Host ''
+Write-Host '=== SHA256SUMS 行匹配 ==='
+# 两种格式都得认:
+#   <hash>  <filename>     HashiCorp 的 packer SHA256SUMS
+#   <hash> *<filename>     GNU coreutils 的二进制模式(Ubuntu 的 ISO 就是这种)
+# 之前只认第一种,结果 Ubuntu 的 ISO 明明在清单里,却说"没有这一条"。
+. (Join-Path $WorkDir 'lib\packer.ps1')
+
+$gnu = @(
+    '487f87faaf547ea30e0aba4d5b53346292571256b25333a978db1692bcee9dd2 *ubuntu-26.04-desktop-amd64.iso',
+    'cc8a95cde20f6ced61a322420de00f10cc3c90ced545daa46cb9c1a117f1d927 *ubuntu-26.04.1-live-server-amd64.iso'
+)
+$hashicorp = @(
+    '9e2e0a4c9f4b7e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e  packer_1.16.1_windows_amd64.zip'
+)
+$line = Select-Sha256Line -Lines $gnu -FileName 'ubuntu-26.04.1-live-server-amd64.iso'
+$total++
+Assert-True ($null -ne $line) 'GNU 格式(*前缀)能匹配到'
+if ($line) {
+    $total++
+    Assert-True (($line -split '\s+')[0] -eq 'cc8a95cde20f6ced61a322420de00f10cc3c90ced545daa46cb9c1a117f1d927') `
+        'GNU 格式取出来的哈希值对'
+}
+$line2 = Select-Sha256Line -Lines $hashicorp -FileName 'packer_1.16.1_windows_amd64.zip'
+$total++
+Assert-True ($null -ne $line2) 'HashiCorp 格式(空格分隔)能匹配到'
+$line3 = Select-Sha256Line -Lines $gnu -FileName 'ubuntu-26.04.1-desktop-amd64.iso'
+$total++
+Assert-True ($null -eq $line3) '文件不存在时返回空(不误配)'
 
 Write-Host ''
 if ($failed -eq 0) { Write-Host "全部通过 ($total 项)" -ForegroundColor Green; exit 0 }
