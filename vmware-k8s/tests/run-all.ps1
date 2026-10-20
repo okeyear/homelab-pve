@@ -30,6 +30,8 @@ function Invoke-TestFile {
 
 # ---- 1. PowerShell 语法 + BOM ----
 Invoke-TestFile 'ps-syntax' (Join-Path $TestDir 'test-ps-syntax.ps1')
+# ---- 1.5 跨文件函数调用的参数绑定 ----
+Invoke-TestFile 'params' (Join-Path $TestDir 'test-params.ps1')
 # ---- 2. 编码回归(UTF-8 读写 / BOM / $var 展开)----
 Invoke-TestFile 'encoding' (Join-Path $TestDir 'test-encoding.ps1')
 # ---- 3. guest 脚本的 bash 语法 ----

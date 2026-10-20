@@ -608,7 +608,7 @@ $baseVmx = Join-Path $VmRoot ($BaseName + '\' + $BaseName + '.vmx')
 if (& $run 'base') {
     $baseVmx = Invoke-BuildBase -VmrunExe $vmrun -TemplateVmx $templateVmx `
         -SshExe $sshExe -ScpExe $scpExe -KeyFile $SshKey -KnownHosts $KnownHosts `
-        -User $SshUser -RepoRoot $RepoRoot -Base $BaseNode `
+        -User $SshUser -Password $VagrantPassword -RepoRoot $RepoRoot -Base $BaseNode `
         -Vnet $vmnet.Name -K8sMinor $K8sMinor
 }
 
