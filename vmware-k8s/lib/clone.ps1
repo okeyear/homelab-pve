@@ -1,11 +1,16 @@
-﻿# vmware-k8s — 从模板全克隆出 k8s 节点
+﻿# vmware-k8s — 把 k8s-base 克隆成 k8s 节点
 #
-# 用 vmrun full clone:模板盘整份复制一份,然后改 .vmx 里的
+# 用 vmrun full clone:base 盘整份复制一份,然后改 .vmx 里的
 # 资源规格和网卡。
 #
 # 关键点:MAC 是写死的(addressType=static)。因为节点要靠 MAC
-# 在 VMware 的 DHCP 里拿固定 IP(见 vmnet.ps1),MAC 必须在
-# 开机之前就是已知的,不能等 VMware 随机生成。
+# 认领自己的 IP —— 宿主机把 IP / 网关 / DNS 写进 .vmx 的 guestinfo,
+# guest 里那个开机服务(vmware-clone-prep.sh)读回来,写进 netplan。
+#
+# 为什么不走宿主机上的静态 DHCP 租约:那要改
+# C:\ProgramData\VMware\vmnetdhcp.conf 并重启 VMnetDHCP 服务,
+# 普通权限做不了,整套流程会被"必须以管理员身份运行"卡住。
+# 现在 IP 完全由 guest 自己配,宿主机一个字的全局配置都不用改。
 
 Set-StrictMode -Version Latest
 
@@ -20,8 +25,13 @@ function New-NodeDefinition {
     #>
     param(
         [Parameter(Mandatory)][string]$Name,        # k8s-master
-        [Parameter(Mandatory)][string]$Address,     # 10.10.10.11
-        [Parameter(Mandatory)][string]$Mac,         # 00:50:56:0A:0A:0B
+        # 允许空串:base 机器(k8s-base)装 base 的过程中走 DHCP,
+        # 地址是问出来的,事先不知道。PowerShell 的 mandatory string
+        # 参数默认**拒绝**空串,不显式放开的话,建 base 节点这一步
+        # 直接报 "Cannot bind argument to parameter 'Address' because
+        # it is an empty string"。
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Address,     # 10.10.10.201
+        [Parameter(Mandatory)][string]$Mac,         # 00:50:56:0A:0A:C9
         [Parameter(Mandatory)][string]$Role,         # master / worker
         [int]$Cpus = 2,
         [int]$MemoryMB = 4096,
@@ -110,14 +120,18 @@ function Invoke-Vmrun {
 function Copy-TemplateToNode {
     <#
       .SYNOPSIS
-        把模板全克隆成一台节点,并按节点定义改好 .vmx。
+        把 base 盘全克隆成一台节点,并按节点定义改好 .vmx。
     #>
     param(
         [Parameter(Mandatory)][string]$VmrunExe,
         [Parameter(Mandatory)][string]$TemplateVmx,
         [Parameter(Mandatory)][string]$VmRoot,
         [Parameter(Mandatory)][object]$Node,
-        [Parameter(Mandatory)][string]$Vnet
+        [Parameter(Mandatory)][string]$Vnet,
+        # 网关 / DNS,写进 guestinfo 交给 guest 自己配 netplan。
+        # base 机器不需要(它走 DHCP),可以留空。
+        [string]$Gateway = '',
+        [string]$Dns = ''
     )
 
     $vmDir = Join-Path $VmRoot $Node.Name
@@ -145,11 +159,23 @@ function Copy-TemplateToNode {
     Set-VmxValue -VmxPath $vmx -Key 'scsi0.virtualDev' -Value 'pvscsi'
     Set-VmxValue -VmxPath $vmx -Key 'ethernet0.connectionType' -Value 'nat'
     Set-VmxValue -VmxPath $vmx -Key 'ethernet0.vnet' -Value $Vnet
-    # MAC 写死:节点要靠它拿固定 IP,必须是开机前就已知的。
+    # MAC 写死:节点要靠它认领自己的 IP,必须是开机前就已知的。
     Set-VmxValue -VmxPath $vmx -Key 'ethernet0.addressType' -Value 'static'
     Set-VmxValue -VmxPath $vmx -Key 'ethernet0.address' -Value $Node.Mac
     # guestinfo:guest 那边靠它拿到自己的主机名
     Set-VmxValue -VmxPath $vmx -Key 'guestinfo.hostname' -Value $Node.Name
+    # guestinfo:guest 那边靠它拿到自己的 IP / 网关 / DNS,写进 netplan。
+    # VMware 不会给 guest 传环境变量,guestinfo 是唯一可靠的通道
+    # (guest 里用 vmware-rpctool "info-get guestinfo.ip" 读)。
+    #
+    # base 机器的 Address 是空的(它走 DHCP,地址用 vmrun 问出来),
+    # 这三个键就不写 —— 写一个空字符串进去,clone-prep 会当成"宿主机
+    # 说这个地址是空的",反而添乱。
+    if ($Node.Address) {
+        Set-VmxValue -VmxPath $vmx -Key 'guestinfo.ip' -Value $Node.Address
+        if ($Gateway) { Set-VmxValue -VmxPath $vmx -Key 'guestinfo.gateway' -Value $Gateway }
+        if ($Dns) { Set-VmxValue -VmxPath $vmx -Key 'guestinfo.nameserver' -Value $Dns }
+    }
     Set-VmxValue -VmxPath $vmx -Key 'annotation' -Value "vmware-k8s $($Node.Role) $($Node.Address)"
 
     # 模板上挂着的安装 ISO 不用了,留着会让机器每次启动都去认那张盘。
@@ -178,6 +204,14 @@ function Expand-NodeDisk {
         vmrun 没有 resize 子命令,得用 vmware-vdiskmanager。
         磁盘改大是安全的(vmx 里写的是新大小,盘上是稀疏文件),
         改小会丢数据,所以只允许变大。
+
+        磁盘文件的位置**从 .vmx 里读**(scsi0:0.fileName),不靠扫目录猜:
+        packer 的产物叫 disk.vmdk,而 vmrun full clone 出来的常常叫
+        <节点名>-disk1.vmdk —— 靠文件名模式去筛,很容易把唯一那块盘
+        筛掉,然后"扩盘"静默变成"什么都没做"。
+
+        vmware-vdiskmanager -x 的单位是**MB**,不是 "20 GB" 这种带单位的
+        字符串(写成带单位的会被当成非法值)。
     #>
     param(
         [Parameter(Mandatory)][string]$VmrunExe,
@@ -189,20 +223,36 @@ function Expand-NodeDisk {
         Write-Note "找不到 vmware-vdiskmanager.exe,磁盘保持模板大小"
         return
     }
-    $vmdk = Get-ChildItem -LiteralPath (Split-Path -Parent $VmxPath) -Filter '*.vmdk' -File |
-        Where-Object { $_.Name -notlike '*-disk1.vmdk' -and $_.Name -notlike '*snapshot*' } |
-        Select-Object -First 1
-    if (-not $vmdk) {
+
+    $vmDir = Split-Path -Parent $VmxPath
+    $vmdkPath = $null
+    foreach ($l in (Read-Utf8Lines $VmxPath)) {
+        if ($l -match '^\s*scsi0:0\.fileName\s*=\s*"(.*)"') {
+            $vmdkPath = Join-Path $vmDir $Matches[1]
+            break
+        }
+    }
+    if (-not $vmdkPath -or -not (Test-Path -LiteralPath $vmdkPath)) {
+        # .vmx 里没写 scsi0:0.fileName(老磁盘用 ide/sata)就退回去扫,
+        # 但这次不排除任何名字 —— 只排除 snapshot 目录。
+        $hit = Get-ChildItem -LiteralPath $vmDir -Filter '*.vmdk' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.DirectoryName -eq $vmDir } |
+            Select-Object -First 1
+        if ($hit) { $vmdkPath = $hit.FullName }
+    }
+    if (-not $vmdkPath) {
         Write-Note '没找到 .vmdk,磁盘保持模板大小'
         return
     }
-    $target = "{0} GB" -f $Node.DiskGB
-    $r = & $vdm -x $target $vmdk.FullName 2>&1
+
+    # 目标大小:MB
+    $targetMB = [int]$Node.DiskGB * 1024
+    $r = & $vdm -x $targetMB $vmdkPath 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Note "扩盘失败(保持原大小): $(($r | Out-String).Trim())"
         return
     }
-    Write-Ok "磁盘已扩到 $target"
+    Write-Ok "磁盘已扩到 $targetMB MB ($($Node.DiskGB) GB)"
 }
 
 function Start-NodeVm {

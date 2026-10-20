@@ -1,10 +1,23 @@
 #cloud-config
-# Ubuntu autoinstall(subiquity)配置。
+# Ubuntu autoinstall(subiquity)配置 —— **最小化模板**。
 #
-# build.ps1 会在跑 packer 之前把这个文件里的占位符替换掉:
+# 这份文件只干两件事:把 Ubuntu 装起来,并且用一个**已知的固定地址**装,
+# 好让宿主机上的 packer 能连进来。其余所有东西(cloud-init 配置、apt 源、
+# 基础包、containerd、k8s 组件)都在**克隆之后**装 —— 见
+# guest/base-setup.sh 和 build.ps1 的 base 阶段。
+#
+# 为什么模板里不装那些重活:autoinstall 的 late-commands 一旦失败就
+# **中止整场安装**(失败不重试),而且装的东西越多,模板构建的失败面
+# 越大。模板越薄,后面每一步的失败都越好定位。
+#
+# build.ps1 会在跑 packer 之前把占位符替换掉:
 #   __SSH_AUTHORIZED_KEY__  宿主机公钥
 #   __PASSWORD_HASH__        vagrant 用户的密码哈希
 #   __HOSTNAME__             模板主机名
+#   __TEMPLATE_CIDR__        模板的固定地址(带掩码,例如 10.10.10.9/24)
+#   __GATEWAY__              网关(VMware NAT 的网关)
+#   __DNS_PRIMARY__          主 DNS
+#   __DNS_SECONDARY__        备用 DNS
 autoinstall:
   version: 1
 
@@ -20,41 +33,77 @@ autoinstall:
     authorized-keys:
       - __SSH_AUTHORIZED_KEY__
 
-  # 不写 network 段:subiquity 会自动给第一块网卡配 DHCP。写死网卡的
-  # 名字(ens33 / ens160 之类)在不同 VMware 版本上不一样,写名字反而
-  # 容易翻车。DHCP 由 VMware 的 VMnetDHCP 服务发,build.ps1 会把
-  # 三个节点的地址用静态租约钉死。
-  late-commands:
-    # vagrant 免密 sudo。仓库里 setup-k8s/scripts/*.sh 全篇都是 sudo。
-    - curtin-installer --target=/target --shell=sh -c "echo 'vagrant ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/99-vagrant"
-    - curtin-installer --target=/target --shell=sh -c "chmod 0440 /target/etc/sudoers.d/99-vagrant"
-    # 模板里留下的 machine-id / host key 对克隆出来的机器来说是重复的,
-    # clone-prep.sh 会在克隆首启时重置。但模板自己这一份也要先清掉。
-    - curtin-installer --target=/target --shell=sh -c "rm -f /target/etc/machine-id"
-    - curtin-installer --target=/target --shell=sh -c "rm -f /target/etc/ssh/ssh_host_*"
-    - curtin-installer --target=/target --shell=sh -c "rm -f /target/var/lib/cloud/instance/instance-id"
-
+  # 只装"能连进来"和"能被克隆"必需的几样。剩下的全部留给 base 阶段。
+  #
+  # sudo 必须在列表里:ubuntu-minimal 不带它,少了它 /etc/sudoers.d 目录
+  # 都不存在,后面 base 阶段写免密 sudo 那一步必然失败。
+  # open-vm-tools 也在列表里:宿主机靠 vmrun getGuestIPAddress 问 guest
+  # 要地址,靠它关机 —— 没有它这两件事都做不了。
   packages:
-    - open-vm-tools
     - openssh-server
+    - sudo
+    - ca-certificates
     - curl
     - wget
-    - jq
-    - chrony
-    - ca-certificates
-    - apt-transport-https
-    - gnupg
-    - conntrack
-    - ipvsadm
-    - libseccomp2
-    - socat
-    - nfs-common
+    - open-vm-tools
 
   # 时区跟仓库里 setup-k8s/scripts/01-base-pkgs.sh 保持一致。
   timezone: Asia/Shanghai
+
+  # ---------------------------------------------------------------- 网络
+  #
+  # 这里写**固定地址**,不是 DHCP。原因是 packer 找 guest IP 的方式:
+  # 它读 VMware 的 DHCP 租约文件(C:\ProgramData\VMware\vmnetdhcp.leases),
+  # 按 MAC 挑出**还没过期**的条目,取其中**最早**的一条去连。
+  #
+  # 而 Ubuntu 的 live-server ISO 里,live 环境和装好的目标系统用的是
+  # **两种不同的 DHCP client-id**:
+  #
+  #   live 环境   systemd-networkd  →  uid ff:29:58:75:53:00:03:00:01:<mac>
+  #   目标系统    dhclient          →  uid 01:<mac>
+  #
+  # client-id 不同 → DHCP 派给它们的地址不同。实测 live 环境拿到
+  # 10.10.10.10、目标系统拿到 10.10.10.11,于是 packer 死死地连着
+  # live 环境那个地址,对着一个永远不会有我们公钥的 sshd 一路撞到
+  # ssh_timeout 耗尽(40 分钟),模板永远装不出来。
+  #
+  # 写死固定地址就绕开了这一切:官方文档明确写着 network 段
+  # "is applied during installation as well as in the installed system" ——
+  # 也就是 **live 环境和装好的目标系统是同一个地址**。宿主机那边
+  # 直接用 packer 的 ssh_host 指过去,一行都不用猜。
+  #
+  # 地址要落在 VMware DHCP 池(10.10.10.10 - 10.10.10.200)**外面**,
+  # 否则 DHCP 随时可能把这个地址派给别的机器,IP 就撞了。
+  # 10.10.10.9 正好在池子外面。
+  network:
+    version: 2
+    ethernets:
+      k8s0:
+        # 按接口名匹配,不写死 ens33 —— VMware 的网卡名在不同硬件
+        # 版本 / 不同内核上是 ens33 / ens160 / enp0s3 都可能。
+        # subiquity 的 netplan 解析器支持 name 通配符(match.name)。
+        match:
+          name: "en*"
+        dhcp4: false
+        dhcp6: false
+        addresses:
+          - __TEMPLATE_CIDR__
+        routes:
+          - to: default
+            via: __GATEWAY__
+        nameservers:
+          addresses:
+            - __DNS_PRIMARY__
+            - __DNS_SECONDARY__
 
   # 磁盘:20G。装完系统本身大概占 3-4G,剩下的留给 containerd 镜像和
   # 日志。模板的磁盘大小在 packer 那边定,这里只是让分区用满。
   storage:
     layout:
       name: direct
+
+  # 刻意**不写** late-commands:
+  #   之前写过,踩过两个坑:一是 curtin 压根没有 curt-installer 这个
+  #   子命令(正确的是 `curtin in-target -- <cmd>`),二是 late-commands
+  #   失败不重试、直接中止整场安装。免密 sudo、machine-id 重置这些
+  #   改到 base 阶段用 SSH 做,失败了能看见、能重试。

@@ -34,6 +34,8 @@ Invoke-TestFile 'ps-syntax' (Join-Path $TestDir 'test-ps-syntax.ps1')
 Invoke-TestFile 'encoding' (Join-Path $TestDir 'test-encoding.ps1')
 # ---- 3. guest 脚本的 bash 语法 ----
 Invoke-TestFile 'bash-syntax' (Join-Path $TestDir 'test-bash-syntax.ps1')
+# ---- 3.5 autoinstall user-data 的结构(离线,不依赖网络)----
+Invoke-TestFile 'userdata' (Join-Path $TestDir 'test-userdata.ps1')
 # ---- 4. 静态 DHCP 租约写入器(在副本上做)----
 Invoke-TestFile 'vmnet-lease' (Join-Path $TestDir 'test-vmnet-lease.ps1')
 # ---- 5. 节点定义 / MAC 推导 ----

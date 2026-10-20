@@ -218,7 +218,13 @@ function New-AutoinstallUserData {
         [string]$MetaDataPath = '',
         [Parameter(Mandatory)][string]$PublicKey,
         [Parameter(Mandatory)][string]$PasswordHash,
-        [Parameter(Mandatory)][string]$Hostname
+        [Parameter(Mandatory)][string]$Hostname,
+        # 固定地址相关。模板装系统期间和装完之后都用这一个地址,
+        # 宿主机那边直接用 packer 的 ssh_host 指过去。
+        [Parameter(Mandatory)][string]$TemplateCidr,   # 10.10.10.9/24
+        [Parameter(Mandatory)][string]$Gateway,        # 10.10.10.2
+        [Parameter(Mandatory)][string]$DnsPrimary,     # 10.10.10.2
+        [Parameter(Mandatory)][string]$DnsSecondary    # 223.5.5.5
     )
 
     $tpl = Read-Utf8Text $TemplatePath
@@ -226,7 +232,11 @@ function New-AutoinstallUserData {
     # "意外的标记 .Replace"。把括号打在行尾,点跟在后面才行。
     $out = ($tpl.Replace('__SSH_AUTHORIZED_KEY__', $PublicKey.Trim())).
         Replace('__PASSWORD_HASH__', $PasswordHash).
-        Replace('__HOSTNAME__', $Hostname)
+        Replace('__HOSTNAME__', $Hostname).
+        Replace('__TEMPLATE_CIDR__', $TemplateCidr).
+        Replace('__GATEWAY__', $Gateway).
+        Replace('__DNS_PRIMARY__', $DnsPrimary).
+        Replace('__DNS_SECONDARY__', $DnsSecondary)
 
     $dir = Split-Path -Parent $OutPath
     if (-not (Test-Path -LiteralPath $dir)) {

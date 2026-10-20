@@ -1,14 +1,21 @@
-﻿# vmware-k8s — 静态 DHCP 租约写入器的离线测试
+﻿# vmware-k8s — VMware DHCP 池的读取与判断
 #
-# 这个函数会改宿主机上 VMware 的全局配置,写坏了三台机器都上不了网。
-# 所以先在副本上测,并且要证明:
-#   1. 租约确实写进去了
-#   2. 文件里原有的内容(别的网段、VMware 自己的 host 块、地址池)一个都没丢
-#   3. 重复执行是幂等的 —— 不会攒出一堆重复条目
+# 为什么要有这个测试:
 #
-# 上一版这里用正则锚点 + 捕获组下标去切文件,结果把 subnet 段的正文
-# (range / option ...)整个弄丢了。现在改成按大括号配对数行数,
-# 这个测试就是防它再犯的。
+# 节点 IP 是**写死**的静态地址(10.10.10.201 / .202 / .203),
+# 由 guest 自己写进 netplan。宿主机这边不再改 VMware 的 DHCP 配置,
+# 所以整个流程不需要管理员权限。
+#
+# 但代价是:静态地址必须自己保证**不落在 VMware 的 DHCP 池里**。
+# 池子里的地址随时可能被派给别的机器,IP 一撞,表现是
+# "偶尔 SSH 上的是另一台机器" —— 极难查。
+#
+# 所以这里测两件事:
+#   1. Get-VmnetDhcpRange 能不能从 vmnetdhcp.conf 里把 range 读出来
+#   2. Test-IpInRange 的边界判断对不对(特别是上下边界和跨段)
+#
+# 跑法:
+#   powershell -NoProfile -ExecutionPolicy Bypass -File vmware-k8s\tests\test-vmnet-lease.ps1
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -20,6 +27,7 @@ $WorkDir = Split-Path -Parent $TestDir
 
 $failed = 0
 $total = 0
+
 function Assert-True {
     param([bool]$Condition, [string]$Message)
     $script:total++
@@ -27,69 +35,108 @@ function Assert-True {
     else { Write-Host "  FAIL $Message" -ForegroundColor Red; $script:failed++ }
 }
 
-$real = 'C:\ProgramData\VMware\vmnetdhcp.conf'
-if (-not (Test-Path -LiteralPath $real)) {
-    Write-Host "[skip] 这台机器上没有 $real" -ForegroundColor Yellow
-    exit 0
+# ---------------------------------------------------------------- 1
+Write-Host '=== 从 vmnetdhcp.conf 里读出 range ==='
+
+$fixture = Join-Path $TestDir '_vmnetdhcp.conf'
+# 真机上这个文件里**有好几段** subnet:VMnet1 的 host-only、
+# VMnet8 的 NAT……第一段往往不是我们要的那个。
+# 实测本机第一个 range 是 192.168.56.128-254(VMnet1),
+# 10.10.10.0/24 那段在文件更靠后的位置 —— 拿第一个来判断
+# "静态地址有没有和 DHCP 撞",等于什么都没验。
+$conf = @'
+# VMware DHCP 配置(节选,格式和真的一模一样)
+subnet 192.168.56.0 netmask 255.255.255.0 {
+range 192.168.56.128 192.168.56.254;            # default allows up to 125 VM's
+option broadcast-address 192.168.56.255;
+option domain-name-servers 192.168.56.2;
+option routers 192.168.56.2;
+default-lease-time 1800;
+max-lease-time 7200;
+}
+subnet 10.10.10.0 netmask 255.255.255.0 {
+range 10.10.10.10 10.10.10.200;            # default allows up to 125 VM's
+option broadcast-address 10.10.10.255;
+option domain-name-servers 10.10.10.2;
+option routers 10.10.10.2;
+default-lease-time 1800;
+max-lease-time 7200;
+}
+host VMnet8 {
+    hardware ethernet 00:50:56:C0:00:08;
+    fixed-address 10.10.10.1;
+}
+'@
+Write-Utf8Text $fixture $conf
+
+$range = Get-VmnetDhcpRange -Path $fixture -Subnet '10.10.10.0'
+Assert-True ($null -ne $range) '读得出 range'
+if ($range) {
+    Assert-True ($range.Start -eq '10.10.10.10') "range 起点对(实际 $($range.Start))"
+    Assert-True ($range.End -eq '10.10.10.200') "range 终点对(实际 $($range.End))"
 }
 
-$copy = Join-Path $TestDir 'vmnetdhcp.conf.copy'
-Copy-Item -LiteralPath $real -Destination $copy -Force
-$script:VmDhcpConf = $copy
+# 不给网段时取第一个 —— 也就是 192.168.56.128 那段
+$first = Get-VmnetDhcpRange -Path $fixture
+Assert-True ($null -ne $first) '不给网段时也能读出 range'
+if ($first) {
+    Assert-True ($first.Start -eq '192.168.56.128') "默认取的是文件里第一段(实际 $($first.Start))"
+}
 
-$before = Get-Content -LiteralPath $copy -Raw
-$beforeLines = ($before -split "`r?`n").Count
+# 指定一个不存在的网段 -> null(不拿别的网段凑数)
+Assert-True ($null -eq (Get-VmnetDhcpRange -Path $fixture -Subnet '10.99.99.0')) `
+    '网段不存在时返回 null(不拿别的网段凑数)'
 
-$leases = @(
-    [pscustomobject]@{ Name = 'k8s-master';  Mac = '00:50:56:0A:0A:0B'; Address = '10.10.10.11' },
-    [pscustomobject]@{ Name = 'k8s-worker1'; Mac = '00:50:56:0A:0A:65'; Address = '10.10.10.101' },
-    [pscustomobject]@{ Name = 'k8s-worker2'; Mac = '00:50:56:0A:0A:66'; Address = '10.10.10.102' }
-)
+# 没有 range 的配置文件 -> 返回 null(而不是瞎猜一个)
+$noRange = Join-Path $TestDir '_vmnetdhcp_norange.conf'
+Write-Utf8Text $noRange "subnet 10.10.10.0 netmask 255.255.255.0 {`noption routers 10.10.10.2;`n}"
+Assert-True ($null -eq (Get-VmnetDhcpRange -Path $noRange)) '没有 range 行时返回 null(不瞎猜)'
 
+# 文件不存在 -> null
+Assert-True ($null -eq (Get-VmnetDhcpRange -Path (Join-Path $TestDir '_不存在的文件.conf'))) `
+    '文件不存在时返回 null'
+
+# ---------------------------------------------------------------- 2
 Write-Host ''
-Write-Host '=== 第一次写入 ==='
-Set-StaticDhcpLease -Subnet '10.10.10.0' -Netmask '255.255.255.0' -Lease $leases
-$after1 = Get-Content -LiteralPath $copy -Raw
+Write-Host '=== Test-IpInRange 的边界判断 ==='
+$start = '10.10.10.10'
+$end = '10.10.10.200'
 
+# 池内
+Assert-True (Test-IpInRange -Address '10.10.10.10' -Start $start -End $end) '起点算在池内'
+Assert-True (Test-IpInRange -Address '10.10.10.200' -Start $start -End $end) '终点算在池内'
+Assert-True (Test-IpInRange -Address '10.10.10.100' -Start $start -End $end) '中间算在池内'
+
+# 池外
+Assert-True (-not (Test-IpInRange -Address '10.10.10.9' -Start $start -End $end)) '起点前面一个不在池内'
+Assert-True (-not (Test-IpInRange -Address '10.10.10.201' -Start $start -End $end)) '终点后面一个不在池内'
+Assert-True (-not (Test-IpInRange -Address '10.10.10.1' -Start $start -End $end)) '宿主机自己的地址不在池内'
+Assert-True (-not (Test-IpInRange -Address '10.10.10.250' -Start $start -End $end)) 'VIP 不在池内'
+Assert-True (-not (Test-IpInRange -Address '10.10.11.100' -Start $start -End $end)) '别的网段不在池内'
+Assert-True (-not (Test-IpInRange -Address '10.9.10.100' -Start $start -End $end)) '更前面的网段不在池内'
+
+# ---------------------------------------------------------------- 3
 Write-Host ''
-Write-Host '=== 断言 ==='
-Assert-True ($after1 -match 'host k8s-master \{')                  '写进了 k8s-master 块'
-Assert-True ($after1 -match 'hardware ethernet 00:50:56:0A:0A:0B;') '写进了 master 的 MAC'
-Assert-True ($after1 -match 'fixed-address 10\.10\.10\.11;')         '写进了 master 的地址'
-Assert-True ($after1 -match 'fixed-address 10\.10\.10\.101;')        '写进了 worker1 的地址'
-Assert-True ($after1 -match 'fixed-address 10\.10\.10\.102;')        '写进了 worker2 的地址'
+Write-Host '=== 本方案用到的静态地址都在池外 ==='
+# 这是**真机**检查:读真实的 vmnetdhcp.conf,确认 build.ps1 变量区
+# 里的静态地址不会和 DHCP 抢。读不到配置就跳过(不是所有机器都装了
+# VMware 的 DHCP 服务)。
+$real = Get-VmnetDhcpRange -Subnet '10.10.10.0'
+if (-not $real) {
+    Write-Host '  [skip] 本机读不到 vmnetdhcp.conf,跳过真机检查' -ForegroundColor Yellow
+}
+else {
+    Write-Host ("       本机 DHCP 池: {0} - {1}" -f $real.Start, $real.End)
+    foreach ($ip in @('10.10.10.9', '10.10.10.201', '10.10.10.202', '10.10.10.203', '10.10.10.250')) {
+        Assert-True (-not (Test-IpInRange -Address $ip -Start $real.Start -End $real.End)) `
+            "$ip 不在本机 DHCP 池里"
+    }
+}
 
-# 原有内容必须完好 —— 这几条是被上一个版本弄坏过的
-Assert-True ($after1 -match 'range 10\.10\.10\.10 10\.10\.10\.200')  'DHCP 地址池还在'
-Assert-True ($after1 -match 'option routers 10\.10\.10\.2;')          '网关配置还在'
-Assert-True ($after1 -match 'option domain-name-servers 10\.10\.10\.2;') 'DNS 配置还在'
-Assert-True ($after1 -match 'default-lease-time 1800;')              '租期配置还在'
-Assert-True ($after1 -match 'subnet 192\.168\.56\.0')                '别的网段(VMnet1)还在'
-Assert-True ($after1 -match 'host VMnet8 \{')                        'VMware 自己的 host 块还在'
-Assert-True ($after1 -match 'host VMnet1 \{')                        'VMnet1 的块还在'
-
-$after1Lines = ($after1 -split "`r?`n").Count
-Write-Host "  (行数 $beforeLines -> $after1Lines,三个块各 4 行,应该 +12)"
-Assert-True ($after1Lines -eq ($beforeLines + 12)) '行数正好多了 12 行(3 块 x 4 行)'
-
-Write-Host ''
-Write-Host '=== 第二次写入(幂等性) ==='
-Set-StaticDhcpLease -Subnet '10.10.10.0' -Netmask '255.255.255.0' -Lease $leases
-$after2 = Get-Content -LiteralPath $copy -Raw
-
-$count = ([regex]::Matches($after2, 'host k8s-master \{')).Count
-Assert-True ($count -eq 1) "k8s-master 块只有一个(实际 $count)"
-$count = ([regex]::Matches($after2, 'fixed-address 10\.10\.10\.11;')).Count
-Assert-True ($count -eq 1) "10.10.10.11 的租约只有一条(实际 $count)"
-Assert-True (($after2 -split "`r?`n").Count -eq $after1Lines) '第二次写入没有增加行数'
-Assert-True ($after2 -match 'subnet 192\.168\.56\.0') '第二次写入后别的网段还在'
-Assert-True ($after2 -match 'range 10\.10\.10\.10 10\.10\.10\.200') '第二次写入后地址池还在'
-
-Write-Host ''
-Write-Host '=== 清理 ==='
-Remove-Item -LiteralPath $copy -Force
-Remove-Item -LiteralPath "$copy.vmware-k8s.bak" -Force -ErrorAction SilentlyContinue
-Write-Host '  副本已删除,宿主机上的 vmnetdhcp.conf 未被改动'
+# ---------------------------------------------------------------- 清理
+foreach ($f in @($fixture, $noRange)) {
+    if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+}
 
 Write-Host ''
 if ($failed -eq 0) { Write-Host "全部通过 ($total 项)" -ForegroundColor Green; exit 0 }

@@ -31,16 +31,16 @@ function Assert-True {
 }
 
 $masters = @(
-    [pscustomobject]@{ Name = 'k8s-master';  Address = '10.10.10.11' }
+    [pscustomobject]@{ Name = 'k8s-master';  Address = '10.10.10.201' }
 )
 $workers = @(
-    [pscustomobject]@{ Name = 'k8s-worker1'; Address = '10.10.10.101' }
-    [pscustomobject]@{ Name = 'k8s-worker2'; Address = '10.10.10.102' }
+    [pscustomobject]@{ Name = 'k8s-worker1'; Address = '10.10.10.202' }
+    [pscustomobject]@{ Name = 'k8s-worker2'; Address = '10.10.10.203' }
 )
 
 $cfg = New-K8sConfigContent -Masters $masters -Workers $workers `
     -K8sVersion '1.34.12' -PodCidr '10.244.0.0/16' -ServiceCidr '10.96.0.0/12' `
-    -LoadBalancer '10.10.10.10' -User 'vagrant' -NetworkPlugin 'calico'
+    -LoadBalancer '10.10.10.250' -User 'vagrant' -NetworkPlugin 'calico'
 
 $lines = $cfg -split "`n"
 
@@ -51,9 +51,9 @@ Assert-True (@($lines | Where-Object { $_ -eq 'K8S_VERSION=${K8S_VERSION:-1.34.1
     'K8S_VERSION 是完整版本号,且带 shell 默认值'
 Assert-True (@($lines | Where-Object { $_ -eq 'POD_CIDR=10.244.0.0/16' }).Count -eq 1) 'POD_CIDR 对'
 Assert-True (@($lines | Where-Object { $_ -eq 'SERVICE_CIDR=10.96.0.0/12' }).Count -eq 1) 'SERVICE_CIDR 对'
-Assert-True (@($lines | Where-Object { $_ -eq 'MASTER_NODES=("10.10.10.11")' }).Count -eq 1) 'MASTER_NODES 格式对'
-Assert-True (@($lines | Where-Object { $_ -eq 'WORKER_NODES=("10.10.10.101" "10.10.10.102")' }).Count -eq 1) 'WORKER_NODES 格式对'
-Assert-True (@($lines | Where-Object { $_ -eq "LoadBalancer='10.10.10.10'" }).Count -eq 1) 'LoadBalancer 对'
+Assert-True (@($lines | Where-Object { $_ -eq 'MASTER_NODES=("10.10.10.201")' }).Count -eq 1) 'MASTER_NODES 格式对'
+Assert-True (@($lines | Where-Object { $_ -eq 'WORKER_NODES=("10.10.10.202" "10.10.10.203")' }).Count -eq 1) 'WORKER_NODES 格式对'
+Assert-True (@($lines | Where-Object { $_ -eq "LoadBalancer='10.10.10.250'" }).Count -eq 1) 'LoadBalancer 对'
 Assert-True (@($lines | Where-Object { $_ -eq 'NODE_USER=vagrant' }).Count -eq 1) 'NODE_USER 对'
 Assert-True (@($lines | Where-Object { $_ -eq 'NETWORK_PLUGIN="calico"' }).Count -eq 1) 'NETWORK_PLUGIN 对'
 Assert-True (@($lines | Where-Object { $_ -eq 'ENABLE_METALLB=false' }).Count -eq 1) 'ENABLE_METALLB 对'

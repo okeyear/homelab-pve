@@ -84,56 +84,106 @@ if (-not $uv) {
 else {
     $pyCode = "import sys,yaml; d=yaml.safe_load(open(sys.argv[1],encoding='utf-8')); print('|'.join(sorted(d['autoinstall'].keys())))"
 
-    # 这个检查要现装 pyyaml,离不开 pypi。国内直连 pypi 经常抽风,
-    # 所以:先走默认源,失败了换清华镜像再来一次。
-    # 两次都是网络问题,就跳过这一项(不算失败)—— 网络不通不是代码的锅。
-    # 但要是 YAML 真的解析错了,照样红。
-    $attempts = @(
-        @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project'); Name = '默认 pypi' },
-        @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project',
-                    '--index-url', 'https://pypi.tuna.tsinghua.edu.cn/simple'); Name = '清华镜像' }
-    )
+    # ---- 先找本机已经有的 pyyaml(离线)--------------------------------
+    #
+    # `uv run --with pyyaml` 每次都要去索引解析依赖,国内 pypi 一抽风
+    # 这条校验就整个跳过了 —— 而 YAML 合法性恰恰是最不能省的一条:
+    # YAML 写坏了 subiquity 会**静默忽略**整段 late-commands。
+    #
+    # uv 的缓存里有已经 unpack 好的 pyyaml,把它挂到 PYTHONPATH 上
+    # 就能离线用 —— 不碰网络,也就不会因为网络抽风而漏检。
+    $cachedSitePkgs = @()
+    $uvCache = Join-Path $env:LOCALAPPDATA 'uv\cache'
+    if (Test-Path -LiteralPath $uvCache) {
+        $cachedSitePkgs = @(Get-ChildItem -Path $uvCache -Recurse -Filter '__init__.py' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\Lib\\site-packages\\yaml\\__init__\.py$' } |
+            ForEach-Object { Split-Path -Parent (Split-Path -Parent $_.FullName) } |
+            Select-Object -Unique)
+    }
 
     $parsed = $false
     $outText = ''
     $lastOut = $null
-    foreach ($a in $attempts) {
-        $prev = $ErrorActionPreference
+
+    # 方式 A:用 uv 缓存里的 pyyaml(离线)
+    foreach ($sp in $cachedSitePkgs) {
+        $prevEap = $ErrorActionPreference
+        $prevPp = $env:PYTHONPATH
         $ErrorActionPreference = 'Continue'
+        $env:PYTHONPATH = $sp
         try {
-            $lastOut = & $uv @($a.Args) python -c $pyCode $tmp 2>&1
+            $lastOut = & $uv run --python 3.12 --no-project python -c $pyCode $tmp 2>&1
             $code = $LASTEXITCODE
         }
         finally {
-            $ErrorActionPreference = $prev
+            $ErrorActionPreference = $prevEap
+            $env:PYTHONPATH = $prevPp
         }
         $outText = ($lastOut | ForEach-Object { $_.ToString() }) -join "`n"
-        if ($code -eq 0) { $parsed = $true; break }
-        if ($outText -match 'Failed to fetch|Request failed|network|Connection|Temporary failure|SSL') {
-            Write-Host "  [.. ] $($a.Name) 拉不动 pyyaml,换下一个源" -ForegroundColor DarkGray
-            continue
+        if ($code -eq 0) {
+            $parsed = $true
+            Write-Host "  [.. ] 用 uv 缓存里的 pyyaml($sp)" -ForegroundColor DarkGray
+            break
         }
-        break   # 不是网络问题,就是 YAML 本身错了
+    }
+
+    # 方式 B:联网装。默认源不行就换清华镜像,两次都是网络问题就跳过。
+    # 注意:uv 拉不到 pyyaml 时的报错有好几种形态,全都要认出来 ——
+    # 认不出来的话,"网络不通"会被当成"YAML 写错了"而报红。
+    #   error: No solution found when resolving `--with` dependencies
+    #   An index (https://pypi.tuna.tsinghua.edu.cn/simple) returned a 403 Forbidden error
+    #   Failed to fetch / Request failed / Temporary failure / SSL
+    # 这些都是**网络/索引**问题,跟 YAML 语法无关。
+    # YAML 语法错误长什么样:yaml.scanner.ScannerError / ParserError,
+    # 上面这些词一个都不会有。
+    $netErrPattern = 'No solution found|was not found in the package registry|returned a 40[0-9]|Failed to fetch|Request failed|network|Connection|Temporary failure|SSL|index-url'
+    if (-not $parsed) {
+        $attempts = @(
+            @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project'); Name = '默认 pypi' },
+            @{ Args = @('run', '--python', '3.12', '--with', 'pyyaml', '--no-project',
+                        '--index-url', 'https://pypi.tuna.tsinghua.edu.cn/simple'); Name = '清华镜像' }
+        )
+        foreach ($a in $attempts) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $lastOut = & $uv @($a.Args) python -c $pyCode $tmp 2>&1
+                $code = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $prevEap
+            }
+            $outText = ($lastOut | ForEach-Object { $_.ToString() }) -join "`n"
+            if ($code -eq 0) { $parsed = $true; break }
+            if ($outText -match $netErrPattern) {
+                Write-Host "  [.. ] $($a.Name) 拉不动 pyyaml,换下一个源" -ForegroundColor DarkGray
+                continue
+            }
+            break   # 不是网络问题,就是 YAML 本身错了
+        }
     }
 
     if ($parsed) {
         $total++
         Write-Host "  ok   $outText" -ForegroundColor Green
-        # late-commands 是模板能不能用的关键:它负责免密 sudo、
-        # machine-id / SSH host key 重置。被注释掉的话,subiquity 会
-        # 静默跳过,模板看起来装好了,克隆出来的节点全是废的。
+        # network 段是模板能不能用的关键:它配的是**固定地址**,
+        # live 环境和装好的目标系统靠它拿到同一个地址,packer 的
+        # ssh_host 才指得对。被注释掉 / 被吞掉的话,subiquity 会
+        # 静默跳过,模板看起来装好了,packer 却在另一个地址上白等
+        # 40 分钟。
         $total++
-        if ($outText -match 'late-commands') {
-            Write-Host '  ok   late-commands 没有被吞进注释里' -ForegroundColor Green
+        if ($outText -match 'network') {
+            Write-Host '  ok   network 段没有被吞进注释里' -ForegroundColor Green
         }
         else {
-            Write-Host "  FAIL 解析出的键里没有 late-commands(实际: $outText)" -ForegroundColor Red
+            Write-Host "  FAIL 解析出的键里没有 network(实际: $outText)" -ForegroundColor Red
             $failed++
         }
     }
-    elseif ($outText -match 'Failed to fetch|Request failed|network|Connection|Temporary failure|SSL') {
+    elseif ($outText -match $netErrPattern) {
         Write-Host '  [skip] 两个源都拉不到 pyyaml,跳过 YAML 解析校验(网络问题,不是代码问题)' -ForegroundColor Yellow
         $lastOut | Select-Object -First 3 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+        Write-Host '       兜底:packer/http/user-data 的结构检查在 test-userdata.ps1 里(纯文本,不联网)' -ForegroundColor DarkGray
     }
     else {
         $total++

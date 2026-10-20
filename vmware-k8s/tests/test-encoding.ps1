@@ -56,8 +56,8 @@ Write-Host ''
 Write-Host '=== Read-Utf8Text 保住结构 ==='
 $good = Read-Utf8Text $userData
 $goodLines = $good -split "`r?`n"
-$standalone = @($goodLines | Where-Object { $_.Trim() -eq 'late-commands:' })
-Assert-True ($standalone.Count -eq 1) 'late-commands: 单独成行(没有被粘到注释后面)'
+$standalone = @($goodLines | Where-Object { $_.Trim() -eq 'network:' })
+Assert-True ($standalone.Count -eq 1) 'network: 单独成行(没有被粘到注释后面)'
 
 # 读出来的内容必须和原始字节对得上
 $reencoded = (New-Object System.Text.UTF8Encoding($false)).GetBytes($good)
@@ -74,10 +74,10 @@ Write-Host '=== 否定测试:ANSI 读法确实会坏(证明上面那条断言会
 $ansi = [System.Text.Encoding]::GetEncoding(936)   # GBK
 $ansiText = $ansi.GetString($bytes)
 $ansiLines = $ansiText -split "`r?`n"
-$ansiStandalone = @($ansiLines | Where-Object { $_.Trim() -eq 'late-commands:' })
-$glued = @($ansiLines | Where-Object { $_ -match 'late-commands:' -and $_.Trim() -ne 'late-commands:' })
-Assert-True ($ansiStandalone.Count -eq 0) 'ANSI 读法下 late-commands: 不再单独成行'
-Assert-True ($glued.Count -ge 1) 'ANSI 读法下 late-commands: 被粘进了注释行'
+$ansiStandalone = @($ansiLines | Where-Object { $_.Trim() -eq 'network:' })
+$glued = @($ansiLines | Where-Object { $_ -match 'network:' -and $_.Trim() -ne 'network:' })
+Assert-True ($ansiStandalone.Count -eq 0) 'ANSI 读法下 network: 不再单独成行'
+Assert-True ($glued.Count -ge 1) 'ANSI 读法下 network: 被粘进了注释行'
 if ($glued.Count -ge 1) {
     Write-Host "       实际粘成这样: $($glued[0].Trim())" -ForegroundColor DarkGray
 }
@@ -95,14 +95,21 @@ $null = New-AutoinstallUserData `
     -MetaDataPath (Join-Path $WorkDir 'packer\http\meta-data') `
     -PublicKey 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQtest@example' `
     -PasswordHash '$6$abc$defghijklmnopqrstuv' `
-    -Hostname 'k8s-template'
+    -Hostname 'k8s-template' `
+    -TemplateCidr '10.10.10.9/24' `
+    -Gateway '10.10.10.2' `
+    -DnsPrimary '10.10.10.2' `
+    -DnsSecondary '223.5.5.5'
 
 $genText = Read-Utf8Text $gen
 $genLines = $genText -split "`r?`n"
-Assert-True (@($genLines | Where-Object { $_.Trim() -eq 'late-commands:' }).Count -eq 1) `
-    '生成的 user-data 里 late-commands: 单独成行'
+Assert-True (@($genLines | Where-Object { $_.Trim() -eq 'network:' }).Count -eq 1) `
+    '生成的 user-data 里 network: 单独成行'
 Assert-True ($genText.Contains('k8s-template')) '占位符 __HOSTNAME__ 换掉了'
 Assert-True (-not $genText.Contains('__HOSTNAME__')) '没有残留的占位符'
+Assert-True ($genText.Contains('10.10.10.9/24')) '占位符 __TEMPLATE_CIDR__ 换成了实际地址'
+Assert-True ($genText.Contains('via: 10.10.10.2')) '占位符 __GATEWAY__ 换成了实际网关'
+Assert-True (-not $genText.Contains('__TEMPLATE_CIDR__')) '没有残留的地址占位符'
 $genBytes = [System.IO.File]::ReadAllBytes($gen)
 $genBom = ($genBytes.Length -ge 3 -and $genBytes[0] -eq 0xEF -and $genBytes[1] -eq 0xBB -and $genBytes[2] -eq 0xBF)
 Assert-True (-not $genBom) '生成的 user-data 不带 BOM'
@@ -165,6 +172,7 @@ $prod = @(
     'lib\packer.ps1',
     'lib\vmnet.ps1',
     'lib\clone.ps1',
+    'lib\base.ps1',
     'lib\k8s.ps1'
 )
 foreach ($rel in $prod) {

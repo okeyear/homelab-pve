@@ -47,19 +47,30 @@ if (Test-Path -LiteralPath $packerSrc) {
     Copy-Item -LiteralPath $packerSrc -Destination (Join-Path $packerDst 'packer.exe') -Force
 }
 
-# 每个会被改动的文件,先存一份原样,跑完一个负例就还原
-$mutatedFiles = @('build.ps1', 'lib\packer.ps1', 'lib\clone.ps1', 'lib\k8s.ps1',
-                  'lib\common.ps1', 'tests\test-packer-validate.ps1')
+# 每个会被改动的文件,先存一份原样,跑完一个负例就还原。
+#
+# Bom = $true 表示还原时要写 BOM —— .ps1 在 PowerShell 5.1 下没 BOM 会被
+# 按系统 ANSI(GBK)读,中文全变乱码。user-data 恰恰相反:它不能有 BOM,
+# 因为那是直接喂给 cloud-init 的 YAML,BOM 会顶掉开头的 #cloud-config。
+$mutatedFiles = @(
+    @{ Path = 'build.ps1';                    Bom = $true },
+    @{ Path = 'lib\packer.ps1';               Bom = $true },
+    @{ Path = 'lib\clone.ps1';                Bom = $true },
+    @{ Path = 'lib\k8s.ps1';                  Bom = $true },
+    @{ Path = 'lib\common.ps1';               Bom = $true },
+    @{ Path = 'tests\test-packer-validate.ps1'; Bom = $true },
+    @{ Path = 'packer\http\user-data';        Bom = $false }
+)
 $pristine = @{}
 foreach ($f in $mutatedFiles) {
-    $p = Join-Path $tree $f
-    $pristine[$f] = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
+    $p = Join-Path $tree $f.Path
+    $pristine[$f.Path] = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
 }
 
 function Restore-Tree {
     foreach ($f in $mutatedFiles) {
-        $p = Join-Path $tree $f
-        [System.IO.File]::WriteAllText($p, $pristine[$f], (New-Object System.Text.UTF8Encoding($true)))
+        $p = Join-Path $tree $f.Path
+        [System.IO.File]::WriteAllText($p, $pristine[$f.Path], (New-Object System.Text.UTF8Encoding($f.Bom)))
     }
 }
 
@@ -72,10 +83,65 @@ $m6To = @'
 "CLUSTER_NAME=${CLUSTER_NAME:-""devops-k8s""}"
 '@
 $m7From = @'
-$templateVmx = Join-Path $WorkDir ('packer\output\ubuntu-template\' + $TemplateName + '.vmx')
+$templateVmx = Join-Path $WorkDir ('packer\output\' + $TemplateName + '.vmx')
 '@
 $m7To = @'
-$templateVmx = Join-Path $WorkDir 'packer\output\ubuntu-template\'"$TemplateName.vmx"
+$templateVmx = Join-Path $WorkDir 'packer\output\'"$TemplateName.vmx"
+'@
+# M8:把 network 段改回 DHCP。
+# 这是实跑时最贵的一个坑:packer 靠读 VMware 的 DHCP 租约文件找
+# guest IP,而 live 环境和目标系统的 DHCP client-id 不同,两边拿到
+# 不同地址,packer 死死连着 live 环境那个地址,40 分钟连不上。
+$m8From = @'
+        dhcp4: false
+'@
+$m8To = @'
+        dhcp4: true
+'@
+# M10:把按 name 通配符匹配网卡改成写死接口名。
+# VMware 的网卡名在不同硬件版本 / 不同内核上是 ens33 / ens160 /
+# enp0s3 都可能,写死名字是最容易翻车的地方。
+$m10From = @'
+          name: "en*"
+'@
+$m10To = @'
+          name: "ens33"
+'@
+# M11:把 late-commands 加回来。
+# curtin 没有 curt-installer 这个子命令,而且 late-commands 失败
+# **不重试、直接中止整场安装** —— 模板越薄,失败面越小。
+$m11From = @'
+  storage:
+'@
+$m11To = @'
+  late-commands:
+    - curtin-installer --target=/target --shell=sh -c "echo 'vagrant ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/99-vagrant"
+
+  storage:
+'@
+# M12:从 packages 里删掉 sudo。
+# ubuntu-minimal 不带 sudo,少了它 /etc/sudoers.d 目录都不存在,
+# base 阶段写免密 sudo 那步必然失败。
+$m12From = @'
+    - sudo
+'@
+$m12To = ''
+# M13:把固定地址写死在 user-data 里,不用占位符。
+# 同一个地址要同时出现在 user-data 的 network 段和 packer 的
+# ssh_host 里。两处各写一份,早晚会写歪 —— 写歪了 packer 会在一个
+# 没人听的地址上白等 40 分钟,而两边看起来都"有地址"。
+$m13From = @'
+          - __TEMPLATE_CIDR__
+'@
+$m13To = @'
+          - 10.10.10.9/24
+'@
+# M14:让 packer 的 ssh_host 和 user-data 里的地址对不上。
+$m14From = @'
+        ssh_host             = $TemplateIP
+'@
+$m14To = @'
+        ssh_host             = "10.10.10.99"
 '@
 
 # ---------------------------------------------------------------- 负例清单
@@ -93,12 +159,12 @@ $muts = @(
         Expect = 'lib\packer.ps1 里没有 ANSI 编解码的读写调用'
     }
     @{
-        Name  = 'M1b user-data 改成按 GBK 解码(检查靠"late-commands 必须单独成行"这条规则咬)'
+        Name  = 'M1b user-data 改成按 GBK 解码(检查靠"network 必须单独成行"这条规则咬)'
         File  = 'lib\packer.ps1'
         From  = '$tpl = Read-Utf8Text $TemplatePath'
         To    = '$tpl = [System.IO.File]::ReadAllText($TemplatePath, [System.Text.Encoding]::GetEncoding(936))'
         Test  = 'tests\test-encoding.ps1'
-        Expect = '生成的 user-data 里 late-commands: 单独成行'
+        Expect = '生成的 user-data 里 network: 单独成行'
     }
     @{
         Name  = 'M2 .vmx 改回 Get-Content(中文 displayName 会被读成乱码)'
@@ -148,6 +214,64 @@ $muts = @(
         Test  = 'tests\test-ps-syntax.ps1'
         Expect = '相邻的字符串字面量'
     }
+    @{
+        Name  = 'M8 network 段改回 DHCP(packer 会连着 live 环境那个地址,40 分钟连不上)'
+        File  = 'packer\http\user-data'
+        From  = $m8From
+        To    = $m8To
+        Test  = 'tests\test-userdata.ps1'
+        # 用断言上的英文标记来匹配,不用中文 —— 中文那串一旦跟被测
+        # 脚本里的措辞差一个字,负例就会"因为别的原因失败"而失去意义。
+        Expect = 'FAIL NO_STATIC_IP'
+    }
+    @{
+        Name  = 'M9 user-data 的 YAML 语法写坏(YAML 坏了 subiquity 会静默丢掉整段配置)'
+        File  = 'packer\http\user-data'
+        From  = '  version: 1'
+        To    = '  version: [1, 2'
+        Test  = 'tests\test-bash-syntax.ps1'
+        Expect = 'FAIL YAML 解析失败'
+    }
+    @{
+        Name  = 'M10 网卡匹配改成写死 ens33(换个硬件版本/内核就翻车)'
+        File  = 'packer\http\user-data'
+        From  = $m10From
+        To    = $m10To
+        Test  = 'tests\test-userdata.ps1'
+        Expect = 'FAIL NO_HARDCODED_IFNAME'
+    }
+    @{
+        Name  = 'M11 把 late-commands 加回来(失败不重试,直接中止整场安装)'
+        File  = 'packer\http\user-data'
+        From  = $m11From
+        To    = $m11To
+        Test  = 'tests\test-userdata.ps1'
+        Expect = 'FAIL NO_LATE_COMMANDS'
+    }
+    @{
+        Name  = 'M12 packages 里删掉 sudo(ubuntu-minimal 不带它,免密 sudo 那步必失败)'
+        File  = 'packer\http\user-data'
+        From  = $m12From
+        To    = $m12To
+        Test  = 'tests\test-userdata.ps1'
+        Expect = 'FAIL NO_SUDO_PACKAGE'
+    }
+    @{
+        Name  = 'M13 固定地址写死在 user-data 里(和 packer 的 ssh_host 对不上)'
+        File  = 'packer\http\user-data'
+        From  = $m13From
+        To    = $m13To
+        Test  = 'tests\test-userdata.ps1'
+        Expect = 'FAIL NO_HARDCODED_IP'
+    }
+    @{
+        Name  = 'M14 packer 的 ssh_host 和 user-data 里的地址对不上'
+        File  = 'build.ps1'
+        From  = $m14From
+        To    = $m14To
+        Test  = 'tests\test-userdata.ps1'
+        Expect = 'FAIL NO_SSH_HOST_MISMATCH'
+    }
 )
 
 # ---------------------------------------------------------------- 跑
@@ -163,7 +287,12 @@ foreach ($m in $muts) {
         continue
     }
     $src = $src.Replace($m.From, $m.To)
-    [System.IO.File]::WriteAllText($path, $src, (New-Object System.Text.UTF8Encoding($true)))
+    # BOM 按文件来:.ps1 要 BOM,user-data 不能有(BOM 会顶掉 #cloud-config)
+    $bom = $true
+    foreach ($f in $mutatedFiles) {
+        if ($f.Path -eq $m.File) { $bom = $f.Bom; break }
+    }
+    [System.IO.File]::WriteAllText($path, $src, (New-Object System.Text.UTF8Encoding($bom)))
 
     $testPath = Join-Path $tree $m.Test
     $prev = $ErrorActionPreference
@@ -180,8 +309,8 @@ foreach ($m in $muts) {
     $total++
     if ($code -eq 0) {
         Assert-True $false '改坏之后检查居然还是绿的(断言不会咬)'
-        Write-Host '       ---- 检查的输出 ----' -ForegroundColor DarkGray
-        ($text -split "`n") | Select-Object -Last 15 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+        Write-Host '       ---- 检查的完整输出 ----' -ForegroundColor DarkGray
+        ($text -split "`n") | Select-Object -First 60 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
     }
     else {
         Write-Host "  ok   检查报失败(退出码 $code)" -ForegroundColor Green
@@ -193,7 +322,8 @@ foreach ($m in $muts) {
     }
     else {
         Assert-True $false "是别的原因失败(不是预期中的: $($m.Expect))"
-        ($text -split "`n") | Select-Object -Last 15 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+        Write-Host '       ---- 检查的完整输出 ----' -ForegroundColor DarkGray
+        ($text -split "`n") | Select-Object -First 60 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
     }
     Write-Host ''
 }

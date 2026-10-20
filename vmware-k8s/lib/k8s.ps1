@@ -93,24 +93,59 @@ function Test-NodeSsh {
     return ($r.ExitCode -eq 0 -and $r.Output -match 'vmware-k8s-ssh-ok')
 }
 
+function Remove-KnownHostEntry {
+    <#
+      .SYNOPSIS
+        把 known_hosts 里某个地址的旧记录删掉。
+
+      .DESCRIPTION
+        节点每次克隆都会重新生成 SSH host key(clone-prep 干的),
+        所以同一个地址的 key 每轮都不一样。宿主机这边如果不把旧记录
+        清掉,连接会直接被拒:
+
+            REMOTE HOST IDENTIFICATION HAS CHANGED!
+
+        刚建好的集群跑得好好的,重跑一次 build 就连不上 —— 而且
+        报错长得像"有人劫持了中间人",其实只是自己的旧记录。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$KnownHosts,
+        [Parameter(Mandatory)][string]$Host_
+    )
+    $keygen = Get-Command 'ssh-keygen.exe' -ErrorAction SilentlyContinue
+    if (-not $keygen) { $keygen = Get-Command 'ssh-keygen' -ErrorAction SilentlyContinue }
+    if (-not $keygen) {
+        Write-Note '找不到 ssh-keygen,没法清理 known_hosts 的旧记录'
+        return
+    }
+    $null = & $keygen.Source -R $Host_ -f $KnownHosts 2>&1
+}
+
 function Wait-NodeReady {
     <#
       .SYNOPSIS
         等节点能 ssh,并且 IP 是期望的那个。
+
       .DESCRIPTION
         只等 ssh 通是不够的:一台机器刚起来、拿到 DHCP 之前,也可能
         恰好有别的地址能连上。必须核对 IP 是我们要的那个,否则后面
         装 k8s 会装到错的机器上。
+
+        节点首启时 clone-prep 会把 DHCP 地址换成静态地址,这个过程要
+        一两分钟 —— 中间 ssh 会连不上,这是正常的,一直等就行。
     #>
     param(
         [Parameter(Mandatory)][string]$SshExe,
         [Parameter(Mandatory)][string[]]$SshArgs,
         [Parameter(Mandatory)][string]$User,
         [Parameter(Mandatory)][string]$Host_,
+        [Parameter(Mandatory)][string]$KnownHosts,
         [int]$TimeoutSec = 600
     )
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $last = ''
+    # 先把旧记录清掉 —— 节点每次克隆都会换 host key
+    Remove-KnownHostEntry -KnownHosts $KnownHosts -Host_ $Host_
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
         $r = Invoke-Ssh -SshExe $SshExe -SshArgs $SshArgs -User $User -Host_ $Host_ `
             -Command 'echo vmware-k8s-ssh-ok' -TimeoutSec 30
@@ -125,6 +160,11 @@ function Wait-NodeReady {
                 return $true
             }
             $last = "ssh 通了,但机器上的地址是 '$($got.Trim())',期望 '$Host_'"
+        }
+        elseif ($r.Output -match 'REMOTE HOST IDENTIFICATION HAS CHANGED') {
+            # 节点换了 host key(每次克隆都会换),把旧记录清掉重来
+            Remove-KnownHostEntry -KnownHosts $KnownHosts -Host_ $Host_
+            $last = 'host key 变了(节点重新克隆过),已清理 known_hosts'
         }
         else {
             $last = 'ssh 还没通'
@@ -268,12 +308,35 @@ function Invoke-K8sStage {
     }
 
     # ---- 2. 基础包 / containerd / kubelet ----
+    #
+    # 这三个脚本在 base 阶段已经在 k8s-base 上装过了,节点是从 base
+    # 克隆来的,东西都在。这里**先探一下**,已经有了就跳过 ——
+    # 02-2-containerd.sh 每次都要重新下载 containerd / runc / cni
+    # 三个包,三台节点重跑一遍要多花好几分钟,没必要。
+    #
+    # 但不能简单地"默认跳过":单独跑 -Stage k8s 的时候,节点可能是
+    # 别的方式来的,那就得老老实实装一遍。所以是**探测**,不是假设。
     $pkgScripts = @(
         @{ Name = '01-base-pkgs.sh'; Env = '' },
         @{ Name = '02-2-containerd.sh'; Env = '' },
         @{ Name = '03-kubelet.sh'; Env = "k8sver=v$K8sMinor" }
     )
     foreach ($n in $Nodes) {
+        $have = Invoke-Ssh -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $n.Address `
+            -Command 'command -v kubeadm >/dev/null 2>&1 && command -v containerd >/dev/null 2>&1 && echo k8s-prep-ok' `
+            -TimeoutSec 60
+        if ($have.ExitCode -eq 0 -and $have.Output -match 'k8s-prep-ok') {
+            Write-Ok ("{0}: 基础组件已就位(kubeadm + containerd),跳过重装" -f $n.Address)
+            continue
+        }
+        Write-Info ("{0}: 缺基础组件,补装" -f $n.Address)
+        # 02-2-containerd.sh 开头就 `cd /tmp/setup-k8s/pkgs/`,而仓库里
+        # 没有这个目录(它只是脚本下载 containerd / runc / cni 的落脚点)。
+        # cd 失败之后脚本**不会停**(它没有 set -e),而是接着在当前目录
+        # 里下载 —— 能跑通,但文件散在 scripts/ 下面。在宿主机这边把目录
+        # 建出来,仓库里的脚本一个字都不用改。
+        $null = Invoke-Ssh -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $n.Address `
+            -Command 'mkdir -p /tmp/setup-k8s/pkgs'
         foreach ($s in $pkgScripts) {
             Write-Info "$($n.Address): $($s.Name)"
             $cmd = "bash /tmp/setup-k8s/scripts/$($s.Name)"

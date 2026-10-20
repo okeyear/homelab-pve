@@ -1,12 +1,17 @@
-﻿# vmware-k8s — vmnet 检测与静态 DHCP 租约
+﻿# vmware-k8s — vmnet 检测
 #
-# 节点要拿到固定 IP(10.10.10.11 / .101 / .102),因为仓库里
-# setup-k8s/config.sh 的 MASTER_NODES / WORKER_NODES 就是写死的这几个地址。
+# 节点要拿到固定 IP(10.10.10.201 / .202 / .203),因为仓库里
+# setup-k8s/config.sh 的 MASTER_NODES / WORKER_NODES 就是写死的
+# 这几个地址。
 #
-# 做法:在 VMware 的 DHCP 配置里给每台机器的 MAC 写一条固定租约。
-# guest 那边保持是一个普通的 DHCP 客户端,什么都不用改 —— 这比
-# "往 guest 里写静态 IP"干净得多,也不用担心克隆之后 cloud-init
-# 不重跑、IP 没被改的问题。
+# 做法**不在宿主机上**做:早期方案是往 VMware 的 DHCP 配置里写静态
+# 租约,那要改 C:\ProgramData\VMware\vmnetdhcp.conf 并重启 VMnetDHCP
+# 服务,普通权限做不了。现在改成由 guest 自己写 netplan 配静态 IP
+# (见 guest/clone-prep.sh),宿主机这边一行全局配置都不用改。
+#
+# 但"地址不能和 DHCP 池撞"这件事必须查 —— VMware 的 DHCP 池是
+# 10.10.10.10 - 10.10.10.200,写死的静态地址要是落在池子里,
+# DHCP 随时可能把它派给别的机器,IP 就撞了。
 
 Set-StrictMode -Version Latest
 
@@ -96,43 +101,52 @@ function Resolve-VmnetForSubnet {
     }
 }
 
-function Set-StaticDhcpLease {
+function Get-VmnetDhcpRange {
     <#
       .SYNOPSIS
-        在 vmnetdhcp.conf 的目标 subnet 段里写入/更新静态租约。
-      .PARAMETER Lease
-        @{ Mac='00:50:56:0A:0A:0B'; Address='10.10.10.11'; Name='k8s-master' }
+        读出某个网段在 VMware DHCP 里的地址池范围。
+
+      .DESCRIPTION
+        写在 vmnetdhcp.conf 的 subnet 段里,形如:
+
+            subnet 10.10.10.0 netmask 255.255.255.0 {
+            range 10.10.10.10 10.10.10.200;            # default allows up to 125 VM's
+            ...
+
+        **必须按网段找,不能拿文件里第一个 range 就用。**
+        一个 vmnetdhcp.conf 里通常有好几段(VMnet1 的 host-only、
+        VMnet8 的 NAT……),第一段往往不是我们关心的那个。实测本机上
+        第一个 range 是 192.168.56.128-254(VMnet1),而 NAT 那段
+        10.10.10.0/24 的 range 在文件更靠后的位置 —— 拿第一个来判断
+        "静态地址有没有和 DHCP 撞",等于什么都没验。
+
+        读不到就返回 $null —— 宁可不知道,也不要瞎猜一个范围出来
+        (猜错了会让人以为地址是安全的,实际撞了 IP)。
+
+      .PARAMETER Subnet
+        目标网段,例如 '10.10.10.0'。留空 = 取文件里第一个 range。
     #>
     param(
-        [Parameter(Mandatory)][string]$Subnet,       # 10.10.10.0
-        [Parameter(Mandatory)][string]$Netmask,      # 255.255.255.0
-        [Parameter(Mandatory)][object[]]$Lease
+        [string]$Subnet = '',
+        [string]$Path = ''
     )
+    if (-not $Path) { $Path = $script:VmDhcpConf }
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $lines = [System.Collections.Generic.List[string]](Read-Utf8Lines $Path)
 
-    if (-not (Test-Path -LiteralPath $script:VmDhcpConf)) {
-        Stop-WithError "找不到 $($script:VmDhcpConf),VMware 的 DHCP 服务没装好"
-    }
-
-    # 按 UTF-8 读,和下面写出去的编码对称(写是无 BOM 的 UTF-8)。
-    # Get-Content 在 5.1 上默认 ANSI,读回来再写会把非 ASCII 变成乱码。
-    $lines = [System.Collections.Generic.List[string]](Read-Utf8Lines $script:VmDhcpConf)
-    $leaseNames = @($Lease | ForEach-Object { $_.Name })
-
-    # ---- 1. 找到目标 subnet 段 ----
-    # 之前这里用的是正则锚点 + 捕获组下标,结果把 subnet 段的正文
-    # (range / option ...)整个弄丢了 —— 配置文件里有大括号,拿正则去
-    # 猜哪一行是收尾,迟早出错。改成按大括号配对数行数,稳。
+    # 找到目标 subnet 段。段里有可能有嵌套的大括号(少见,但
+    # "host xxx { ... }" 就是一层的),所以按大括号配对数行数,
+    # 不靠正则去猜哪一行是收尾。
     $start = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match ('^\s*subnet\s+' + [regex]::Escape($Subnet) +
-                               '\s+netmask\s+' + [regex]::Escape($Netmask) + '\s*\{')) {
-            $start = $i
-            break
+        if ($Subnet) {
+            if ($lines[$i] -match ('^\s*subnet\s+' + [regex]::Escape($Subnet) + '\s')) { $start = $i; break }
+        }
+        else {
+            if ($lines[$i] -match '^\s*subnet\s+') { $start = $i; break }
         }
     }
-    if ($start -lt 0) {
-        Stop-WithError "vmnetdhcp.conf 里找不到 subnet $Subnet $Netmask 这一段"
-    }
+    if ($start -lt 0) { return $null }
 
     $depth = 0
     $end = $start
@@ -141,68 +155,39 @@ function Set-StaticDhcpLease {
         $depth -= ([regex]::Matches($lines[$i], '\}')).Count
         if ($depth -le 0) { $end = $i; break }
     }
-    if ($end -le $start) {
-        Stop-WithError "subnet $Subnet 这一段的大括号不配对,不敢改"
-    }
 
-    # ---- 2. 把我们之前写的同名 host 块摘掉 ----
-    $body = New-Object System.Collections.Generic.List[string]
-    $i = $start
-    while ($i -le $end) {
-        $m = [regex]::Match($lines[$i], '^\s*host\s+(\S+)\s*\{')
-        if ($m.Success -and ($leaseNames -contains $m.Groups[1].Value)) {
-            $d = 0
-            while ($i -le $end) {
-                $d += ([regex]::Matches($lines[$i], '\{')).Count
-                $d -= ([regex]::Matches($lines[$i], '\}')).Count
-                $i++
-                if ($d -le 0) { break }
+    for ($i = $start; $i -le $end; $i++) {
+        $m = [regex]::Match($lines[$i], '^\s*range\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)')
+        if ($m.Success) {
+            return [pscustomobject]@{
+                Start = $m.Groups[1].Value
+                End   = $m.Groups[2].Value
+                Subnet = $Subnet
             }
-            continue
         }
-        $body.Add($lines[$i])
-        $i++
     }
-
-    # ---- 3. 新租约插到 subnet 段收尾大括号之前 ----
-    $close = $body[$body.Count - 1]
-    $newBody = New-Object System.Collections.Generic.List[string]
-    for ($i = 0; $i -lt $body.Count - 1; $i++) { $newBody.Add($body[$i]) }
-    foreach ($l in $Lease) {
-        $newBody.Add("host $($l.Name) {")
-        $newBody.Add("    hardware ethernet $($l.Mac);")
-        $newBody.Add("    fixed-address $($l.Address);")
-        $newBody.Add("}")
-    }
-    $newBody.Add($close)
-
-    $result = New-Object System.Collections.Generic.List[string]
-    for ($i = 0; $i -lt $start; $i++) { $result.Add($lines[$i]) }
-    foreach ($l in $newBody) { $result.Add($l) }
-    for ($i = $end + 1; $i -lt $lines.Count; $i++) { $result.Add($lines[$i]) }
-
-    $backup = "$script:VmDhcpConf.vmware-k8s.bak"
-    Copy-Item -LiteralPath $script:VmDhcpConf -Destination $backup -Force
-    Write-Utf8Lines $script:VmDhcpConf $result.ToArray()
-    Write-Ok "已写入静态租约到 $script:VmDhcpConf (备份: $backup)"
-
-    foreach ($l in $Lease) {
-        Write-Info ("    {0,-14} {1}  ->  {2}" -f $l.Name, $l.Mac, $l.Address)
-    }
+    return $null
 }
 
-function Restart-VmwareDhcpService {
-    $svc = Get-Service -Name 'VMnetDHCP' -ErrorAction SilentlyContinue
-    if (-not $svc) {
-        Write-Note '找不到 VMnetDHCP 服务,静态租约要等 VMware 重启后才生效'
-        return
+function Test-IpInRange {
+    <#
+      .SYNOPSIS
+        判断一个 IP 是否落在某个地址范围里。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [Parameter(Mandatory)][string]$Start,
+        [Parameter(Mandatory)][string]$End
+    )
+    $a = [System.Net.IPAddress]::Parse($Address)
+    $s = [System.Net.IPAddress]::Parse($Start)
+    $e = [System.Net.IPAddress]::Parse($End)
+    $ab = $a.GetAddressBytes()
+    $sb = $s.GetAddressBytes()
+    $eb = $e.GetAddressBytes()
+    for ($i = 0; $i -lt 4; $i++) {
+        if ($ab[$i] -lt $sb[$i]) { return $false }
+        if ($ab[$i] -gt $eb[$i]) { return $false }
     }
-    Write-Info '重启 VMnetDHCP 服务以加载新租约...'
-    Restart-Service -Name 'VMnetDHCP' -Force
-    Start-Sleep -Seconds 2
-    $st = (Get-Service -Name 'VMnetDHCP').Status
-    if ($st -ne 'Running') {
-        Stop-WithError "VMnetDHCP 服务重启后状态是 $st,租约没生效"
-    }
-    Write-Ok 'VMnetDHCP 已重启'
+    return $true
 }

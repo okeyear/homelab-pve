@@ -40,8 +40,11 @@ $vars = @(
     'ssh_username         = "vagrant"',
     'ssh_password         = "vagrant"',
     "ssh_private_key_file = `"$($env:USERPROFILE -replace '\\','/')/.ssh/id_rsa`"",
-    "guest_scripts_dir    = `"$(($WorkDir -replace '\\','/') + '/guest')`"",
-    "http_dir             = `"$(($WorkDir -replace '\\','/') + '/.cache/http/http')`""
+    "http_dir             = `"$(($WorkDir -replace '\\','/') + '/.cache/http/http')`"",
+    'ssh_host             = "10.10.10.9"',
+    'ssh_handshake_attempts = 1000',
+    'headless             = true',
+    'mac_address          = "00:50:56:0A:0A:09"'
 ) -join "`n"
 [System.IO.File]::WriteAllText($varsPath, $vars, (New-Object System.Text.UTF8Encoding($false)))
 
