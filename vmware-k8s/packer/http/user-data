@@ -1,0 +1,60 @@
+#cloud-config
+# Ubuntu autoinstall(subiquity)配置。
+#
+# build.ps1 会在跑 packer 之前把这个文件里的占位符替换掉:
+#   __SSH_AUTHORIZED_KEY__  宿主机公钥
+#   __PASSWORD_HASH__        vagrant 用户的密码哈希
+#   __HOSTNAME__             模板主机名
+autoinstall:
+  version: 1
+
+  identity:
+    hostname: __HOSTNAME__
+    username: vagrant
+    password: "__PASSWORD_HASH__"
+
+  ssh:
+    install-server: true
+    allow-pw: true
+    # 宿主机用这把钥匙连进来。装 k8s 的时候全程走 key,不靠密码。
+    authorized-keys:
+      - __SSH_AUTHORIZED_KEY__
+
+  # 不写 network 段:subiquity 会自动给第一块网卡配 DHCP。写死网卡的
+  # 名字(ens33 / ens160 之类)在不同 VMware 版本上不一样,写名字反而
+  # 容易翻车。DHCP 由 VMware 的 VMnetDHCP 服务发,build.ps1 会把
+  # 三个节点的地址用静态租约钉死。
+  late-commands:
+    # vagrant 免密 sudo。仓库里 setup-k8s/scripts/*.sh 全篇都是 sudo。
+    - curtin-installer --target=/target --shell=sh -c "echo 'vagrant ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/99-vagrant"
+    - curtin-installer --target=/target --shell=sh -c "chmod 0440 /target/etc/sudoers.d/99-vagrant"
+    # 模板里留下的 machine-id / host key 对克隆出来的机器来说是重复的,
+    # clone-prep.sh 会在克隆首启时重置。但模板自己这一份也要先清掉。
+    - curtin-installer --target=/target --shell=sh -c "rm -f /target/etc/machine-id"
+    - curtin-installer --target=/target --shell=sh -c "rm -f /target/etc/ssh/ssh_host_*"
+    - curtin-installer --target=/target --shell=sh -c "rm -f /target/var/lib/cloud/instance/instance-id"
+
+  packages:
+    - open-vm-tools
+    - openssh-server
+    - curl
+    - wget
+    - jq
+    - chrony
+    - ca-certificates
+    - apt-transport-https
+    - gnupg
+    - conntrack
+    - ipvsadm
+    - libseccomp2
+    - socat
+    - nfs-common
+
+  # 时区跟仓库里 setup-k8s/scripts/01-base-pkgs.sh 保持一致。
+  timezone: Asia/Shanghai
+
+  # 磁盘:20G。装完系统本身大概占 3-4G,剩下的留给 containerd 镜像和
+  # 日志。模板的磁盘大小在 packer 那边定,这里只是让分区用满。
+  storage:
+    layout:
+      name: direct

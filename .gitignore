@@ -1,3 +1,9 @@
 .env.mcp
 .omo
 __pycache__/
+
+# vmware-k8s 的运行时产物:装好的 packer(100MB+)、下载的 ISO、
+# 生成的 autoinstall user-data、中间状态文件。
+vmware-k8s/.cache/
+# 测试跑完可能残留的临时文件(正常会被清掉,测试崩了就会留下)
+vmware-k8s/tests/_*

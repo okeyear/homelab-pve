@@ -1,0 +1,17 @@
+[Unit]
+Description=VMware clone first-boot preparation (reset machine-id and SSH host keys)
+# 必须在网络起来之后跑:脚本最后要等 DHCP 拿到地址。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 失败不重试:这台机器已经起来就说明基本可用,反复重置 machine-id 反而
+# 可能让 kubelet 看到中途变化的节点 ID。
+ExecStart=/usr/local/sbin/vmware-clone-prep.sh
+StandardOutput=append:/var/log/vmware-clone-prep.log
+StandardError=append:/var/log/vmware-clone-prep.log
+
+[Install]
+WantedBy=multi-user.target

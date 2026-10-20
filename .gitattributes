@@ -1,0 +1,11 @@
+# vmware-k8s 里的这些文件要交给 Linux 执行,必须是 LF。
+#
+# 仓库的 core.autocrlf 在 Windows 上是 true,checkout 出来会变成 CRLF。
+# .sh 带 CR 的话,bash 读进去每行末尾都多个 \r,报出来的是
+# "command not found" / "invalid option" 这种完全指不到真因的错。
+#
+# 只对 vmware-k8s 生效,不动仓库里原有的文件 —— 那边是在 Linux 上用的。
+vmware-k8s/**/*.sh text eol=lf
+vmware-k8s/guest/*.service text eol=lf
+vmware-k8s/packer/http/user-data text eol=lf
+vmware-k8s/packer/http/meta-data text eol=lf
