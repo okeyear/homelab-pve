@@ -41,6 +41,78 @@ Get-ChildItem (Join-Path $WorkDir 'guest') -Filter '*.sh' -File | ForEach-Object
     }
 }
 
+# ---------------------------------------------------------------- sed 分隔符
+#
+# sed 的 s 命令用"分隔符"把 pattern / 替换文本 / flags 隔开,分隔符是
+# **第一个**出现的那个字符,后面再出现同样的字符才算结束。
+#
+# 所以 pattern 里一旦含有分隔符,sed 就会在那个位置把命令截断,
+# 剩下的内容被当成选项 —— 报出来的是:
+#
+#     sed: -e expression #1, char 30: unknown option to `s'
+#
+# 完全指不到真因(没人会想到是分隔符撞了)。
+#
+# 实际踩过:base-setup.sh 里换 apt 源写的是
+#
+#     sed -i -E "s|https?://(archive|security|...)\.ubuntu\.com/ubuntu|$MIRROR|g"
+#
+# pattern 里的或运算 (archive|security|...) 跟分隔符 | 撞了。
+# 改成用 # 当分隔符就好了(# 在 apt 源里不会出现,那是注释符)。
+#
+# bash -n 查不出这个 —— 语法完全合法,只是语义不对。只能静态查。
+Write-Host ''
+Write-Host '=== sed 的分隔符不能跟 pattern 里的字符冲突 ==='
+Get-ChildItem (Join-Path $WorkDir 'guest') -Filter '*.sh' -File | ForEach-Object {
+    $hits = @()
+    $lines = [System.IO.File]::ReadAllLines($_.FullName, [System.Text.Encoding]::UTF8)
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($line -notmatch '\bsed\b') { continue }
+        # s 后面紧跟一个非字母数字的字符 = 分隔符
+        foreach ($m in [regex]::Matches($line, '(?<![A-Za-z0-9])s(?<d>[^A-Za-z0-9])')) {
+            $d = $m.Groups['d'].Value
+            if ($d -eq '\' -or $d -eq "'" -or $d -eq '"') { continue }
+            $p1 = $m.Index + $m.Length    # 第 1 个分隔符之后 = pattern 开始
+            $p2 = $line.IndexOf($d, $p1)   # pattern 结束
+            if ($p2 -lt 0) { continue }
+            $p3 = $line.IndexOf($d, $p2 + 1)   # replacement 结束
+            if ($p3 -lt 0) { continue }
+            # 第 3 个分隔符之后是 **flag 段**,只能是 g / p / i / 数字这些。
+            # 如果这里出现别的东西,说明前面被某个分隔符截断了 ——
+            # 也就是 pattern 里混进了分隔符。
+            #
+            # flag 段到引号 / 分号为止(引号后面是文件名,不是 flag)。
+            $rest = $line.Substring($p3 + 1)
+            $stop = $rest.Length
+            for ($k = 0; $k -lt $rest.Length; $k++) {
+                $ch = $rest[$k]
+                if ($ch -eq ';' -or $ch -eq '"' -or $ch -eq "'") { $stop = $k; break }
+            }
+            $flags = $rest.Substring(0, $stop)
+            $bad = $false
+            foreach ($ch in $flags.ToCharArray()) {
+                if ('0123456789gpimMwW '.IndexOf($ch) -ge 0) { continue }
+                $bad = $true
+                break
+            }
+            if ($bad) {
+                $hits += ("第 {0} 行: 分隔符 '{1}' 跟 pattern 撞了(flag 段出现 '{2}') -> {3}" -f `
+                        ($i + 1), $d, $flags.Substring(0, [math]::Min(24, $flags.Length)), $line.Trim())
+            }
+        }
+    }
+    $total++
+    if ($hits.Count -eq 0) {
+        Write-Host "  ok   $($_.Name) 里的 sed 分隔符没问题" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  FAIL $($_.Name)" -ForegroundColor Red
+        foreach ($h in $hits) { Write-Host "       $h" -ForegroundColor DarkGray }
+        $failed++
+    }
+}
+
 # autoinstall 的 user-data 是 YAML,不是 bash,单独验一下 YAML 能解析
 Write-Host ''
 Write-Host '=== user-data 是合法 YAML ==='

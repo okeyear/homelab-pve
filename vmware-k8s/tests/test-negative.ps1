@@ -59,7 +59,9 @@ $mutatedFiles = @(
     @{ Path = 'lib\k8s.ps1';                  Bom = $true },
     @{ Path = 'lib\common.ps1';               Bom = $true },
     @{ Path = 'tests\test-packer-validate.ps1'; Bom = $true },
-    @{ Path = 'packer\http\user-data';        Bom = $false }
+    @{ Path = 'packer\http\user-data';        Bom = $false },
+    @{ Path = 'guest\base-setup.sh';          Bom = $false },
+    @{ Path = 'guest\region-shim.sh';         Bom = $false }
 )
 $pristine = @{}
 foreach ($f in $mutatedFiles) {
@@ -142,6 +144,64 @@ $m14From = @'
 '@
 $m14To = @'
         ssh_host             = "10.10.10.99"
+'@
+# M15:把 Confirm-Tool 的返回值放回输出流。
+# 这是 base 阶段真实踩到的坑:Invoke-Preflight 结尾 `return $vmnet`,
+# 中间那句 `Confirm-Tool ...` 的返回值(一个字符串路径)没人接,
+# 混进返回值之后 $vmnet 变成 [字符串, 对象] 的数组,访问 .Name 时
+# 在字符串元素上抛 "The property 'Name' cannot be found on this object",
+# 报错里连行号都没有,完全看不出跟 Confirm-Tool 有关。
+$m15From = @'
+    $null = Confirm-Tool -Path $vmrun -What 'vmrun'
+'@
+$m15To = @'
+    Confirm-Tool -Path $vmrun -What 'vmrun'
+'@
+# M16:把 ssh 调用改回裸的 & 调用。
+# PS 5.1 里原生命令往 stderr 写东西,在 $ErrorActionPreference='Stop' 下
+# 会变成终止性错误 —— ssh 第一次连新机器时那句
+# "Warning: Permanently added ... to the list of known hosts."
+# 就能把 k8s 阶段整个带走。
+$m16From = @'
+    $remote = Add-RemoteTimeout -Command $Command -TimeoutSec $TimeoutSec
+    return (Invoke-Native -Exe $SshExe -Arguments (@($SshArgs) + @($target, $remote)))
+'@
+$m16To = @'
+    $remote = Add-RemoteTimeout -Command $Command -TimeoutSec $TimeoutSec
+    $out = & $SshExe @SshArgs $target $remote 2>&1
+    $code = $LASTEXITCODE
+    return [pscustomobject]@{ ExitCode = $code; Output = (($out | ForEach-Object { $_.ToString() }) -join "`n") }
+'@
+# M17:把 sed 的分隔符改回 |。
+# pattern 里的或运算 (archive|security|...) 跟分隔符撞了,sed 会在
+# 第一个 | 处截断命令,报出来的是
+#   sed: -e expression #1, char 30: unknown option to `s'
+# 这种完全指不到真因的错。bash -n 查不出来(语法是合法的)。
+$m17From = @'
+    sed -i -E "s#https?://(archive|security|us\.archive|[\w.-]*archive)\.ubuntu\.com/ubuntu#$MIRROR#g" \
+'@
+$m17To = @'
+    sed -i -E "s|https?://(archive|security|us\.archive|[\w.-]*archive)\.ubuntu\.com/ubuntu|$MIRROR|g" \
+'@
+# M18:把 CNI 兜底的 sed 改回少一个分隔符的写法。
+# sed 的 s 命令要三个分隔符:s@模式@替换@标志。少写一个中间的,
+# sed 会把 "From+To" 整个当成模式,报
+#   sed: -e expression #1, char 69: unterminated `s' command
+# 报错里完全看不出是分隔符少了一个 —— 这是第一次实跑 CNI 兜底时踩到的。
+$m18From = @'
+        "sed -i 's@$From@$To@g' $Manifest && " +
+'@
+$m18To = @'
+        "sed -i 's@$From$To@g' $Manifest && " +
+'@
+# M19:把地区补丁的"其他调用原样放行"改成无限递归。
+# 补丁里的 curl 函数只该拦 ipinfo.io,别的调用必须走 command curl
+# 绕开函数本身 —— 写成 curl 就是无限递归,连 gitHub API 都拉不到了。
+$m19From = @'
+    command curl "$@"
+'@
+$m19To = @'
+    curl "$@"
 '@
 
 # ---------------------------------------------------------------- 负例清单
@@ -272,6 +332,48 @@ $muts = @(
         Test  = 'tests\test-userdata.ps1'
         Expect = 'FAIL NO_SSH_HOST_MISMATCH'
     }
+    @{
+        Name  = 'M15 Confirm-Tool 的返回值没人接(Invoke-Preflight 的返回值被污染)'
+        File  = 'build.ps1'
+        From  = $m15From
+        To    = $m15To
+        Test  = 'tests\test-return-purity.ps1'
+        # 这个检查要指定扫哪棵树(检查的是副本,不是仓库)
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL RETURN_VALUE_LEAK'
+    }
+    @{
+        Name  = 'M16 ssh 调用改回裸的 & (stderr 会变成终止性错误,把 k8s 阶段带走)'
+        File  = 'lib\k8s.ps1'
+        From  = $m16From
+        To    = $m16To
+        Test  = 'tests\test-ps-syntax.ps1'
+        Expect = '里的外部程序调用都走 Invoke-Native'
+    }
+    @{
+        Name  = 'M17 sed 的分隔符跟 pattern 里的或运算撞了(bash -n 查不出来)'
+        File  = 'guest\base-setup.sh'
+        From  = $m17From
+        To    = $m17To
+        Test  = 'tests\test-bash-syntax.ps1'
+        Expect = '里的 sed 分隔符没问题'
+    }
+    @{
+        Name  = 'M18 CNI 兜底的 sed 少一个分隔符(sed 会报 unterminated s command)'
+        File  = 'lib\k8s.ps1'
+        From  = $m18From
+        To    = $m18To
+        Test  = 'tests\test-remote-cmd.ps1'
+        Expect = 'sed 表达式是 s@模式@替换@标志 的形式(三个分隔符)'
+    }
+    @{
+        Name  = 'M19 地区补丁的 curl 无限递归(其他调用没有原样放行)'
+        File  = 'guest\region-shim.sh'
+        From  = $m19From
+        To    = $m19To
+        Test  = 'tests\test-remote-cmd.ps1'
+        Expect = '其他调用用 command curl 原样放行'
+    }
 )
 
 # ---------------------------------------------------------------- 跑
@@ -295,10 +397,13 @@ foreach ($m in $muts) {
     [System.IO.File]::WriteAllText($path, $src, (New-Object System.Text.UTF8Encoding($bom)))
 
     $testPath = Join-Path $tree $m.Test
+    # 有些检查需要额外参数(比如让它扫副本目录而不是仓库)
+    $testArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $testPath)
+    if ($m.ContainsKey('Args') -and $m.Args) { $testArgs += @($m.Args) }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out = & $psExe -NoProfile -ExecutionPolicy Bypass -File $testPath 2>&1
+        $out = & $psExe @testArgs 2>&1
         $code = $LASTEXITCODE
     }
     finally {

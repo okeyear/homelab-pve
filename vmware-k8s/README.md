@@ -199,6 +199,41 @@ base 层装好的东西,节点克隆过来就有了;k8s 阶段会**先探测**�
 装完之后会写出 `setup-k8s/config.sh`,记录这次的 IP 和参数,之后想在一台 Linux 上
 接着用 `setup-k8s/main.sh` 管理这个集群也有据可依。
 
+### 地区判断:仓库脚本自己会问 ipinfo.io(然后判错)
+
+`setup-k8s/scripts/functions.sh` 靠这一行决定用不用国内镜像源:
+
+```bash
+REGION=$(curl -s ipinfo.io | grep -oP '(?<=country": ").*?(?=",)')
+```
+
+ipinfo.io 对匿名请求会限流,返回的内容里没有 `country` 字段时 `REGION` 就是空,
+脚本会走 else 分支改用 `registry.k8s.io` 拉控制面镜像。
+
+**这个选择的代价极大**:`registry.k8s.io` 的 manifest 请求会 307 跳到
+`europe-west3-docker.pkg.dev`,这个域名在国内是 `connection refused`,
+containerd 会一直重试,`kubeadm init` 永远不返回;节点则因为拿不到
+`/var/lib/kubelet/config.yaml` 一直崩溃重启(日志里只写
+`failed to load kubelet config file`,完全看不出是镜像拉不下来)。
+
+所以 k8s 阶段会**先自己问一次**地区(问不到就用缓存,再问不到就当 CN),
+再用 `BASH_ENV` 把结果注入给仓库脚本 —— `guest/region-shim.sh` 用一个
+shell 函数把 `curl ipinfo.io` 拦下来返回固定的国家代码,别的 `curl`
+调用用 `command curl` 原样放行。**仓库里的脚本一个字都不用改。**
+
+### k8s 阶段可以重跑
+
+k8s 阶段开始时会先把三个节点上一次的痕迹清掉(`kubeadm reset` +
+删 `/etc/kubernetes`、`/var/lib/kubelet`),还会杀掉上一次挂死的
+`kubeadm init` 进程。没有这一步,第二次跑会撞上:
+
+- `kubeadm init` → `the cluster already exists`
+- worker join → `This node has already joined the cluster`
+
+远端命令一律套 `timeout`(见 `Add-RemoteTimeout`),所以就算某个脚本
+卡死也只会超时退出,不会把整个 build 干耗着 —— 之前就是 `kubeadm init`
+挂了 15 分钟,build 一直等在那儿。
+
 ---
 
 ## 目录
@@ -222,7 +257,8 @@ vmware-k8s/
 ├── guest/
 │   ├── base-setup.sh            base 层:换源 / 免密 sudo / 装 clone-prep
 │   ├── clone-prep.sh            克隆首启:重置 machine-id / host key / 配 IP
-│   └── clone-prep.service
+│   ├── clone-prep.service
+│   └── region-shim.sh           k8s 层:把仓库脚本的地区判断固定住(见下)
 ├── tests/
 │   ├── run-all.ps1              一键跑全部离线测试
 │   ├── test-ps-syntax.ps1       语法 + UTF-8 BOM

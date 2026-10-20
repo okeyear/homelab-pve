@@ -13,3 +13,8 @@ vmware-k8s/packer/*.pkrvars.hcl
 vmware-k8s/packer/manifest.json
 # packer 自己的缓存(ISO 副本,又 2.7G)
 vmware-k8s/packer/packer_cache/
+# packer build 时自己写的锁文件
+vmware-k8s/packer/manifest.json.lock
+# k8s 阶段跑完自动生成的集群配置(里面是这台机器的实际 IP,
+# 由 vmware-k8s/build.ps1 写;仓库里留的是 config.sh.example)
+setup-k8s/config.sh

@@ -32,6 +32,8 @@ function Invoke-TestFile {
 Invoke-TestFile 'ps-syntax' (Join-Path $TestDir 'test-ps-syntax.ps1')
 # ---- 1.5 跨文件函数调用的参数绑定 ----
 Invoke-TestFile 'params' (Join-Path $TestDir 'test-params.ps1')
+# ---- 1.6 函数返回值有没有被污染 ----
+Invoke-TestFile 'return-purity' (Join-Path $TestDir 'test-return-purity.ps1')
 # ---- 2. 编码回归(UTF-8 读写 / BOM / $var 展开)----
 Invoke-TestFile 'encoding' (Join-Path $TestDir 'test-encoding.ps1')
 # ---- 3. guest 脚本的 bash 语法 ----
@@ -44,6 +46,8 @@ Invoke-TestFile 'vmnet-lease' (Join-Path $TestDir 'test-vmnet-lease.ps1')
 Invoke-TestFile 'node-defs' (Join-Path $TestDir 'test-node-defs.ps1')
 # ---- 6. setup-k8s/config.sh 生成 ----
 Invoke-TestFile 'k8s-config' (Join-Path $TestDir 'test-k8s-config.ps1')
+# ---- 6.5 远端命令包装 + 地区补丁 ----
+Invoke-TestFile 'remote-cmd' (Join-Path $TestDir 'test-remote-cmd.ps1')
 # ---- 7. packer 模板(需要 .cache\packer\packer.exe)----
 $packerExe = Join-Path $WorkDir '.cache\packer\packer.exe'
 if (Test-Path -LiteralPath $packerExe) {

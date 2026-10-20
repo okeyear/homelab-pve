@@ -94,9 +94,20 @@ $sshArgs = @(
 
 function Invoke-Tpl {
     param([string]$Cmd)
-    $out = & $sshExe @sshArgs "vagrant@$ip" $Cmd 2>&1
+    # 原生命令往 stderr 写东西,在 $ErrorActionPreference='Stop' 下会变成
+    # **终止性错误** —— 脚本当场就停了,后面的检查一条都跑不到。
+    # 这里临时放宽,把 stderr 收进 Output 里。
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $sshExe @sshArgs "vagrant@$ip" $Cmd 2>&1
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
     return [pscustomobject]@{
-        Code = $LASTEXITCODE
+        Code = $code
         Text = (($out | ForEach-Object { $_.ToString() }) -join "`n")
     }
 }
@@ -119,10 +130,16 @@ if ($Kind -eq 'template') {
     Write-Host '=== 1. 固定地址生效了吗 ==='
     # 这条最要紧:地址不是固定的那个,packer 的 ssh_host 就指不到。
     Assert-True ($ip -eq $expectIp) "地址是固定的 $expectIp(实际 $ip)"
-    $r = Invoke-Tpl 'ip -4 -o addr show scope global | awk "{print \$4}"'
+    # 不要在远端跑 awk 拼 $4 —— 引号和 $ 都要穿过两层 shell,很容易被吃掉。
+    # 原始输出拉回宿主机上再解析。
+    $r = Invoke-Tpl 'ip -4 -o addr show scope global'
     Write-Host "       机器上的地址: $($r.Text.Trim())"
-    $r = Invoke-Tpl 'grep -rl "10.10.10.9" /etc/netplan/ 2>/dev/null | wc -l'
-    Assert-True ([int]$r.Text.Trim() -ge 1) 'netplan 里写着这个固定地址'
+    Assert-True ($r.Text -match [regex]::Escape($expectIp)) '机器上真的有这个固定地址'
+    # 注意:subiquity 写的 netplan 配置文件权限是 **0600**,只有 root 读得到。
+    # vagrant 直接 grep 是读不出来的(会报 Permission denied),所以这里
+    # 只看文件在不在,内容用上面那条"地址生效了"来证明。
+    $r = Invoke-Tpl 'ls /etc/netplan/ 2>/dev/null | wc -l'
+    Assert-True ([int]$r.Text.Trim() -ge 1) 'netplan 配置文件在'
 
     Write-Host ''
     Write-Host '=== 2. 模板是薄的:base 层的东西不该在这儿 ==='
@@ -197,8 +214,14 @@ Write-Host ''
 Write-Host '=== 规格 ==='
 $r = Invoke-Tpl 'nproc'
 Assert-True ($r.Text.Trim() -eq '2') "CPU 是 2 核(实际 $($r.Text.Trim()))"
-$r = Invoke-Tpl "free -m | awk '/^Mem:/{print \$2}'"
-Assert-True ([int]$r.Text.Trim() -ge 1900 -and [int]$r.Text.Trim() -le 2100) "内存是 2G(实际 $($r.Text.Trim()) MB)"
+$r = Invoke-Tpl 'free -m'
+# free -m 的表头:total used free shared buff/cache available
+# Mem: 那一行的第二个数字才是 total
+$memLine = @($r.Text -split "`n" | Where-Object { $_ -match '^\s*Mem:' } | Select-Object -First 1)
+$memMB = 0
+$cols = @($memLine -split '\s+' | Where-Object { $_ -ne '' })
+if ($cols.Count -ge 2) { $memMB = [int]$cols[1] }
+Assert-True ($memMB -ge 1900 -and $memMB -le 2100) "内存是 2G(实际 $memMB MB)"
 
 Write-Host ''
 Write-Host '=== 收工:把它关掉 ==='

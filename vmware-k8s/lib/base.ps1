@@ -82,6 +82,9 @@ function Invoke-BuildBase {
         [Parameter(Mandatory)][string]$User,
         [Parameter(Mandatory)][string]$Password,
         [Parameter(Mandatory)][string]$RepoRoot,
+        # 宿主机上缓存安装包的地方(containerd / runc / CNI 在宿主机下,
+        # 再推给 guest —— 见 Initialize-ContainerdArtifacts 的说明)
+        [Parameter(Mandatory)][string]$CacheDir,
         [Parameter(Mandatory)][object]$Base,
         [Parameter(Mandatory)][string]$Vnet,
         [Parameter(Mandatory)][string]$K8sMinor
@@ -117,6 +120,12 @@ function Invoke-BuildBase {
 
     # ---- 4. 等 SSH ----
     Write-Step '等 SSH'
+    # 先把 known_hosts 里这个地址的旧记录清掉。
+    # base 是模板的克隆体,host key 跟模板一样 —— 但如果之前跑过
+    # base 阶段(那时模板可能被重新 build 过,host key 变了),
+    # 旧记录就会让 ssh 直接拒绝连接:
+    #     REMOTE HOST IDENTIFICATION HAS CHANGED!
+    Remove-KnownHostEntry -KnownHosts $KnownHosts -Host_ $ip
     $ok = $false
     for ($i = 0; $i -lt 60; $i++) {
         $r = Invoke-Ssh -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $ip `
@@ -191,22 +200,49 @@ function Invoke-BuildBase {
     if ($r.ExitCode -ne 0) {
         Stop-WithError "建 /tmp/setup-k8s/pkgs 失败:`n$($r.Output)"
     }
+
+    # 先把 containerd / runc / CNI 的包在**宿主机上**下好推过去。
+    # 仓库里的 02-2-containerd.sh 见到文件已经在了就跳过下载
+    # (`[ -s <file> ] || wget ...`),所以脚本一个字都不用改。
+    # 不这么做的话,VMware 的 NAT 传大文件只有几十 KB/s,
+    # 三个包 100MB 要磨好几十分钟。详见 lib\k8s.ps1 里
+    # Initialize-ContainerdArtifacts 的说明。
+    $null = Initialize-ContainerdArtifacts -SshExe $SshExe -SshArgs $sshArgs -ScpExe $ScpExe `
+        -User $User -Host_ $ip -CacheDir $CacheDir
+
     $pkgScripts = @(
         @{ Name = '01-base-pkgs.sh'; Env = '' },
         @{ Name = '02-2-containerd.sh'; Env = '' },
         @{ Name = '03-kubelet.sh'; Env = "k8sver=v$K8sMinor" }
     )
+    # 脚本失败**不立刻中止**,先记下来,最后统一按实际状态判定。
+    # 原因见 lib\k8s.ps1 里 Test-K8sPrepReady 的说明:这些脚本
+    # 没有 set -e,退出码取自最后一条命令,而最后一条经常是
+    # "lsmod | grep ..." 或者"拉个测试镜像"这种跟成败无关的东西。
+    $failedScripts = @()
     foreach ($s in $pkgScripts) {
         Write-Info $s.Name
         $cmd = "bash /tmp/setup-k8s/scripts/$($s.Name)"
         if ($s.Env) { $cmd = "$($s.Env) $cmd" }
         $r = Invoke-Ssh -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $ip -Command $cmd
         if ($r.ExitCode -ne 0) {
-            ($r.Output -split "`n" | Select-Object -Last 30) | ForEach-Object { Write-Host "        $_" }
-            Stop-WithError "$($s.Name) 失败"
+            Write-Note "$($s.Name) 退出码 $($r.ExitCode)(先记下,最后看实际状态)"
+            ($r.Output -split "`n" | Select-Object -Last 15) | ForEach-Object { Write-Host "        $_" }
+            $failedScripts += $s.Name
         }
-        Write-Ok "$($s.Name) 完成"
+        else {
+            Write-Ok "$($s.Name) 完成"
+        }
     }
+
+    # 按实际状态判定:组件齐不齐、内核参数生效没有
+    if (-not (Test-K8sPrepReady -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $ip)) {
+        Stop-WithError ("基础组件没装好" +
+            $(if ($failedScripts.Count) { "(失败/可疑的脚本: $($failedScripts -join ', '))" } else { '' }) +
+            "`n    缺 kubeadm / containerd / ipvsadm / chronyc 里的哪个,或者" +
+            "`n    ip_forward / bridge-nf-call-iptables 没生效。")
+    }
+    Write-Ok '基础组件已就位(kubeadm / containerd / ipvsadm / chronyc + 内核参数)'
 
     # ---- 8. 关机 ----
     Write-Step "关掉 $($Base.Name)(关掉之后它就是 k8s 基础镜像)"

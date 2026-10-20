@@ -97,6 +97,61 @@ Get-CheckedScripts | ForEach-Object {
 }
 
 Write-Host ''
+Write-Host '=== 原生命令必须走 Invoke-Native ==='
+# PowerShell 5.1 里,原生命令往 **stderr** 写东西,在
+# $ErrorActionPreference='Stop' 下会变成**终止性错误** —— 脚本当场
+# 退出,退出码和输出一个都拿不到。
+#
+# 实际踩过两次:
+#   1. vmware-vdiskmanager 报 "One of the parameters supplied is
+#      invalid (0x3e80)"(其实只是盘已经是 20G、不用再扩),
+#      把整个 base 阶段带走了。
+#   2. ssh 第一次连新机器时会写 "Warning: Permanently added ... to
+#      the list of known hosts." —— 每个新节点都会出现一次,
+#      照直写就会让 k8s 阶段在第一台节点上就死掉。
+#
+# 仓库里统一用 lib\common.ps1 的 Invoke-Native 包一层,
+# 这个检查保证以后不会有人再写裸的 & 调用。
+$prodScripts = @(Get-ChildItem (Join-Path $WorkDir 'lib') -Filter '*.ps1' -File |
+    ForEach-Object { $_.FullName })
+$prodScripts += (Join-Path $WorkDir 'build.ps1')
+
+foreach ($path in $prodScripts) {
+    $tokens = $null
+    $errs = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $path, [ref]$tokens, [ref]$errs)
+    $cmds = $ast.FindAll({
+            param($n) $n -is [System.Management.Automation.Language.CommandAst]
+        }, $true)
+    $hits = @()
+    foreach ($c in $cmds) {
+        if ($c.InvocationOperator -ne [System.Management.Automation.Language.TokenKind]::Ampersand) {
+            continue
+        }
+        $first = $c.CommandElements[0]
+        # & $run 'stage' —— 阶段分发器,不是外部程序
+        if ($first -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $first.VariablePath.UserPath -eq 'run') { continue }
+        # 找它属于哪个函数
+        $owner = '(脚本顶层)'
+        $p = $c.Parent
+        while ($null -ne $p) {
+            if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                $owner = $p.Name
+                break
+            }
+            $p = $p.Parent
+        }
+        if ($owner -eq 'Invoke-Native') { continue }
+        $hits += "第 $($c.Extent.StartLineNumber) 行($owner): $($c.Extent.Text.Trim())"
+    }
+    Assert-True ($hits.Count -eq 0) `
+        ("{0} 里的外部程序调用都走 Invoke-Native" -f (Split-Path -Leaf $path))
+    foreach ($h in $hits) { Write-Host "       $h" -ForegroundColor DarkGray }
+}
+
+Write-Host ''
 Write-Host '=== 行尾 ==='
 # .ps1 用 CRLF 或 LF 都可以(PowerShell 两个都吃),但同一目录里
 # 混着会让 git diff 很难看。这里只报告,不失败。

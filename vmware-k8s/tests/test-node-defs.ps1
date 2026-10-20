@@ -105,5 +105,79 @@ Assert-True (@($out | Where-Object { $_ -like 'memsize*' }).Count -eq 1) 'memsiz
 Remove-Item -LiteralPath $tmp -Force
 
 Write-Host ''
+Write-Host '=== vmx 键名大小写不敏感(packer 写的全是小写) ==='
+$tmp2 = Join-Path $TestDir '_test2.vmx'
+# 这是 packer 真正生成的 vmx 里的写法:键名全是小写
+[System.IO.File]::WriteAllLines($tmp2, @(
+    '.encoding = "UTF-8"',
+    'ethernet0.addresstype = "generated"',
+    'ethernet0.connectiontype = "nat"',
+    'ethernet0.vnet = ""',
+    'scsi0.virtualdev = "lsilogic"'
+), (New-Object System.Text.UTF8Encoding($false)))
+
+# 用驼峰去改小写写出来的键 —— 改不到就等于**追加**了一条重复键,
+# vmx 里同一个键出现两次(大小写不同),VMware 取哪条看版本。
+Set-VmxValue -VmxPath $tmp2 -Key 'ethernet0.addressType' -Value 'static'
+Set-VmxValue -VmxPath $tmp2 -Key 'ethernet0.connectionType' -Value 'nat'
+Set-VmxValue -VmxPath $tmp2 -Key 'ethernet0.vnet' -Value 'vmnet8'
+
+$o2 = Get-Content -LiteralPath $tmp2
+Assert-True (@($o2 | Where-Object { $_ -match '(?i)^ethernet0\.addresstype' }).Count -eq 1) `
+    'ethernet0.addresstype 只有一行(没被追加出重复键)'
+Assert-True ($o2 -contains 'ethernet0.addresstype = "static"') `
+    '小写键被就地改掉了(保留原来的写法)'
+Assert-True ($o2 -contains 'ethernet0.vnet = "vmnet8"') 'ethernet0.vnet 被改成 vmnet8'
+Assert-True ($o2 -contains 'scsi0.virtualdev = "lsilogic"') '没碰的键原样保留'
+Remove-Item -LiteralPath $tmp2 -Force
+
+Write-Host ''
+Write-Host '=== ISO 挂载要摘掉 ==='
+$tmp3 = Join-Path $TestDir '_test3.vmx'
+[System.IO.File]::WriteAllLines($tmp3, @(
+    '.encoding = "UTF-8"',
+    'ide1:0.fileName = "D:\iso\ubuntu-26.04.1-live-server-amd64.iso"',
+    'ide0:0.fileName = "auto detect"',
+    'ide1:0.present = "TRUE"'
+), (New-Object System.Text.UTF8Encoding($false)))
+Remove-IsoAttachments -VmxPath $tmp3
+$o3 = Get-Content -LiteralPath $tmp3
+Assert-True (-not ($o3 -match '(?i)\.iso')) '.iso 引用被摘掉了'
+Assert-True ($o3 -contains 'ide0:0.fileName = "auto detect"') '虚拟光驱的空盘留着'
+Remove-Item -LiteralPath $tmp3 -Force
+
+Write-Host ''
+Write-Host '=== 节点路径要自己算出来(每个阶段是独立进程) ==='
+# clone 阶段把 .vmx 改好时用的是 Add-Member 设的 Vmx,
+# 但那是在**另一个进程**里 —— boot 阶段重新起一个 build.ps1,
+# 节点定义是全新的,Vmx 是空的。结果就是:
+#   Start-NodeVm : Cannot bind argument to parameter 'Arguments'
+#   because it is an empty string.
+$tmpRoot = Join-Path $TestDir '_vmroot'
+$nd = New-NodeDefinition -Name 'k8s-master' -Address '10.10.10.201' `
+    -Mac (New-NodeMac -Address '10.10.10.201') -Role 'master'
+Set-NodePaths -NodeList @($nd) -VmRoot $tmpRoot
+Assert-True ($nd.Vmx -eq (Join-Path $tmpRoot 'k8s-master\k8s-master.vmx')) `
+    '节点的 .vmx 路径算对了'
+Assert-True ($nd.VmDir -eq (Join-Path $tmpRoot 'k8s-master')) '节点的目录路径算对了'
+# 路径必须和 Copy-TemplateToNode 用的是同一个约定
+$expectDir = Join-Path $tmpRoot $nd.Name
+$expectVmx = Join-Path $expectDir "$($nd.Name).vmx"
+Assert-True ($nd.Vmx -eq $expectVmx) '路径约定和 Copy-TemplateToNode 一致'
+
+Write-Host ''
+Write-Host '=== vnet 要用 VMware 的网络名,不是网卡显示名 ==='
+$buildText = [System.IO.File]::ReadAllText(
+    (Join-Path $WorkDir 'build.ps1'), [System.Text.Encoding]::UTF8)
+Assert-True ($buildText -match '-Vnet\s+\$vmnet\.Vnet') `
+    'build.ps1 传的是 $vmnet.Vnet(Vmware 的网络名 vmnet8)'
+Assert-True ($buildText -notmatch '-Vnet\s+\$vmnet\.Name') `
+    'build.ps1 没有把网卡显示名当成 vnet 名传出去'
+$vmnetText = [System.IO.File]::ReadAllText(
+    (Join-Path $WorkDir 'lib\vmnet.ps1'), [System.Text.Encoding]::UTF8)
+Assert-True ($vmnetText -match 'Vnet\s*=\s*"vmnet\$\(\$match\.Vmnet\)"') `
+    'lib\vmnet.ps1 按 vmnet 序号拼出 VMware 的网络名'
+
+Write-Host ''
 if ($failed -eq 0) { Write-Host "全部通过 ($total 项)" -ForegroundColor Green; exit 0 }
 else { Write-Host "$failed / $total 项失败" -ForegroundColor Red; exit 1 }

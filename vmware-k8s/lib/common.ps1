@@ -279,6 +279,105 @@ function Expand-ZipTo {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $DestDir)
 }
 
+# ---------------------------------------------------------------- 外部程序
+
+function Invoke-Native {
+    <#
+      .SYNOPSIS
+        跑一个外部程序,把 stdout/stderr 合并收下来,返回退出码和输出。
+
+      .DESCRIPTION
+        仓库里所有对外部程序的调用都**必须**走这个函数,不要直接
+        `& $exe ...`。
+
+        原因:PowerShell 5.1 里,原生命令往 **stderr** 写东西,在
+        $ErrorActionPreference='Stop' 下会被变成**终止性错误** ——
+        脚本当场退出,退出码和输出一个都拿不到。
+
+        实际踩过两次:
+
+          1. vmware-vdiskmanager 报 "One of the parameters supplied is
+             invalid (0x3e80)"(其实只是盘已经是 20G、不用再扩),
+             整个 base 阶段被带走,日志里只有半句英文报错。
+          2. ssh 第一次连接一台新机器时会往 stderr 写
+             "Warning: Permanently added '10.10.10.201' to the list of
+             known hosts." —— 这句话**每个新节点都会出现**,
+             照直写就会让 k8s 阶段在第一台节点上就死掉。
+
+        所以:临时把 $ErrorActionPreference 放宽成 'Continue',
+        stderr 的内容就只是流到输出里(2>&1 合并),退出码照样拿得到。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Exe,
+        [string[]]$Arguments = @()
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $Exe @Arguments 2>&1
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+    [pscustomobject]@{
+        ExitCode = $code
+        Output   = (($out | ForEach-Object { $_.ToString() }) -join "`n")
+    }
+}
+
+# ---------------------------------------------------------------- 远端命令
+
+function Add-RemoteTimeout {
+    <#
+      .SYNOPSIS
+        给一条远端命令套上 timeout,让它不可能永远挂着。
+
+      .DESCRIPTION
+        为什么必须有这个:远端命令**不会自己结束**的情况是真实存在的。
+        2026-10-20 那次 kubeadm init 卡了 15 分钟没返回 —— 原因是
+        containerd 一直重试拉不到的镜像(registry.k8s.io 跳到的
+        europe-west3-docker.pkg.dev 在国内是 connection refused)。
+        ssh 的连接是好的(远端进程还活着),所以宿主机这边等多久都没用,
+        整个 build 就那么干耗着。
+
+        做法是在**远端**套 timeout,而不是在宿主机上掐 ssh 进程 ——
+        后者只能杀掉 ssh,远端那个进程还会继续跑,下次重跑又撞上。
+
+        两种命令形态:
+
+        1. 单个程序(可以带 VAR=VAL 前缀)
+           timeout -k 30 900 env VAR=VAL prog args
+           VAR=VAL 必须挪到 env 后面 —— 否则 timeout 会把
+           "VAR=VAL" 当成要执行的程序名,直接报 "failed to run command"。
+
+        2. 复合命令(带 && / || / ; / | / 反引号)
+           timeout -k 30 900 bash -c '...'
+           必须整体交给 bash -c,否则 timeout 只管得到第一条命令,
+           保护是假的(后面的 && 还是能一直挂着)。
+           包在单引号里,命令内部的单引号按 POSIX 规矩转义成 '\''。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [int]$TimeoutSec = 0
+    )
+    if ($TimeoutSec -le 0) { return $Command }
+
+    if ($Command -match '&&|\|\||;|\||`') {
+        $escaped = $Command.Replace("'", "'\''")
+        return "timeout -k 30 $TimeoutSec bash -c '$escaped'"
+    }
+
+    $m = [regex]::Match($Command, '^\s*((?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)+)(.*)$')
+    if ($m.Success) {
+        $assign = $m.Groups[1].Value.TrimEnd()
+        $rest = $m.Groups[2].Value
+        return "timeout -k 30 $TimeoutSec env $assign $rest"
+    }
+
+    return "timeout -k 30 $TimeoutSec $Command"
+}
+
 # ---------------------------------------------------------------- 杂项
 
 function Test-Administrator {

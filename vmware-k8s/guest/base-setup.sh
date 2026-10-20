@@ -46,7 +46,13 @@ if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
 fi
 
 if [ -f /etc/apt/sources.list ]; then
-    sed -i -E "s|https?://(archive|security|us\.archive|[\w.-]*archive)\.ubuntu\.com/ubuntu|$MIRROR|g" \
+    # 分隔符用 **#**,不能用 | ——
+    # 这个正则里有或运算 (archive|security|...),而 sed 只把**第一个**
+    # 出现的分隔符当成结束标记,于是 pattern 在第一个 | 就被截断,
+    # 后面的 |security|... 全被当成选项,报出来的是
+    #   sed: -e expression #1, char 30: unknown option to `s'
+    # 这种完全指不到真因的错。# 在 apt 源里不会出现(那是注释符)。
+    sed -i -E "s#https?://(archive|security|us\.archive|[\w.-]*archive)\.ubuntu\.com/ubuntu#$MIRROR#g" \
         /etc/apt/sources.list
     log "  已改 /etc/apt/sources.list"
 fi
@@ -166,21 +172,45 @@ fi
 # ---------------------------------------------------------------- 7
 # 封存标记
 #
-# 打了这个标记,机器就知道"自己是从模板克隆出来的",首启时该重置
-# 身份。base 机器自己**不**打这个标记 —— 它是"源",不是"克隆"。
+# 打了这个标记,机器就知道"**我的克隆体**需要重置身份"。
+# 三个节点是从本机克隆出来的,带着这个标记,首启时 clone-prep 会重置
+# machine-id / SSH host key / 静态 IP,然后把标记删掉。
+#
+# base 机器**自己**也带这个标记 —— 它就是"源",标记是给克隆体看的。
+# base 自己不会再开机(装完就关机、拿去做克隆源了),所以它自己
+# 带不带标记无所谓。
 MARKER=/var/lib/vmware-k8s-base
 mkdir -p /var/lib
 touch "$MARKER"
-log "已打封存标记 $MARKER"
+log "已打封存标记 $MARKER(克隆体首启时靠它判断要不要重置身份)"
 
 # ---------------------------------------------------------------- 8
-# 顺手清掉模板带过来的身份信息
+# 重置机器身份
 #
-# 模板是从 packer 装出来的,机器身份跟 base 机器本身无关,但清一下
-# 更干净 —— 三个节点是从 base 克隆的,这些残留会被原样带过去。
+# base 是从模板克隆出来的,带着模板的 machine-id。三个节点又是从
+# base 克隆的,于是三台节点的 machine-id 会一模一样 —— kubelet 认为
+# 它们是同一台,集群根本起不来。
+#
+# 这里给 base 自己生成一个全新的 machine-id;每个克隆体首启时
+# clone-prep.sh 还会再各自生成一个,保证三台各不相同。
+#
+# 删之前要先停 dbus,否则 dbus 会把旧的 id 又写回去。
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop dbus.service 2>/dev/null || true
+    systemctl stop systemd-machine-id-dbus.socket 2>/dev/null || true
+fi
+rm -f /etc/machine-id
+rm -f /var/lib/dbus/machine-id
+if command -v systemd-machine-id-setup >/dev/null 2>&1; then
+    systemd-machine-id-setup >/dev/null 2>&1 || true
+fi
+mkdir -p /var/lib/dbus
+ln -sf /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
+log "base 自己的 machine-id = $(cat /etc/machine-id 2>/dev/null || echo '(读取失败)')"
+
+# cloud-init 的 instance-id 也清掉,免得克隆体首启时 cloud-init
+# 认为"这台机器我已经初始化过了",什么都不做。
 rm -f /var/lib/cloud/instance/instance-id 2>/dev/null || true
-rm -f /etc/machine-id 2>/dev/null || true
-rm -f /var/lib/dbus/machine-id 2>/dev/null || true
 
 log "k8s 基础镜像配置完成"
 exit 0

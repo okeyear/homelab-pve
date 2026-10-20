@@ -93,7 +93,9 @@ function Install-Packer {
     if (-not (Test-Path -LiteralPath $exe)) {
         Stop-WithError "解压后找不到 $exe"
     }
-    $ver = (& $exe version) -join ' '
+    # 走 Invoke-Native:packer 往 stderr 写东西的话,直接 & 会把
+    # 整个脚本带走了(见 lib\common.ps1 里 Invoke-Native 的说明)。
+    $ver = (Invoke-Native -Exe $exe -Arguments @('version')).Output
     Write-Ok "packer 安装完成: $ver"
     return $exe
 }

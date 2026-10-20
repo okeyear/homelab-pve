@@ -218,6 +218,11 @@ $BaseNode = New-NodeDefinition -Name $BaseName -Address '' -Mac $BaseMac -Role '
 
 $Nodes = New-ClusterNodes
 
+# 路径自己算出来 —— 每个阶段都是独立进程,不能指望上一个阶段
+# 在内存里留下的 Vmx 字段(Set-NodePaths 在 lib\clone.ps1 里)。
+Set-NodePaths -NodeList @($Nodes) -VmRoot $VmRoot
+Set-NodePaths -NodeList @($BaseNode) -VmRoot $VmRoot
+
 # ==================================================================
 #  阶段
 # ==================================================================
@@ -243,7 +248,11 @@ function Invoke-Preflight {
     }
     Write-Ok "VMware Workstation -> $vmDir"
     $vmrun = Join-Path $vmDir 'vmrun.exe'
-    Confirm-Tool -Path $vmrun -What 'vmrun'
+    # 必须用 $null = 接住:Confirm-Tool 会 return $Path(一个字符串),
+    # 不接住的话它会混进本函数的返回值里,调用方拿到的就成了
+    # [字符串, 对象] 的数组,访问 .Name 时在字符串元素上抛
+    # "The property 'Name' cannot be found on this object"。
+    $null = Confirm-Tool -Path $vmrun -What 'vmrun'
 
     $ssh = Get-SshExe
     if (-not $ssh) { Stop-WithError '找不到 ssh.exe' }
@@ -344,8 +353,12 @@ function Get-PasswordHash {
             'C:\Program Files\Git\usr\bin\openssl.exe',
             'D:\Program Files\Git\mingw64\bin\openssl.exe')) {
         if (Test-Path -LiteralPath $p) {
-            $h = (& $p passwd -6 $Password 2>$null | Select-Object -First 1)
-            if ($h -and $h -match '^\$6\$') { return $h.Trim() }
+            # 走 Invoke-Native:openssl 往 stderr 写东西(比如找不到
+            # 熵源)会变成终止性错误,把整个 build 带走了。
+            $r = Invoke-Native -Exe $p -Arguments @('passwd', '-6', $Password)
+            $h = ($r.Output -split "`n" | Where-Object { $_.Trim() -match '^\$6\$' } |
+                Select-Object -First 1)
+            if ($h) { return $h.Trim() }
         }
     }
     if ($Password -eq 'vagrant') {
@@ -469,17 +482,13 @@ function Invoke-BuildTemplate {
         # 原生命令往 stderr 写东西,在 $ErrorActionPreference='Stop' 下
         # 会变成**终止性错误** —— packer 的报错正文就这么被吃掉了,
         # 只剩一句"退出码 1",完全指不到真因(第一次跑就是这样:
-        # 真实原因是镜像站 403,而日志里啥都没有)。这里临时放宽,
+        # 真实原因是镜像站 403,而日志里啥都没有)。
+        # Invoke-Native 就是干这个的:临时放宽 ErrorActionPreference,
         # 把输出收下来,存一份日志,再打印出来。
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            $packerOut = & $PackerExe build '-var-file=ubuntu-template.pkrvars.hcl' '-color=false' '.' 2>&1
-            $code = $LASTEXITCODE
-        }
-        finally {
-            $ErrorActionPreference = $prev
-        }
+        $r = Invoke-Native -Exe $PackerExe `
+            -Arguments @('build', '-var-file=ubuntu-template.pkrvars.hcl', '-color=false', '.')
+        $code = $r.ExitCode
+        $packerOut = $r.Output
     }
     finally {
         Pop-Location
@@ -489,9 +498,8 @@ function Invoke-BuildTemplate {
         else { $env:PACKER_LOG_PATH = $prevLogPath }
     }
     if ($packerOut) {
-        $text = ($packerOut | ForEach-Object { $_.ToString() }) -join "`n"
-        Write-Utf8Text (Join-Path $CacheDir 'packer-build.log') $text
-        $packerOut | ForEach-Object { Write-Host "  $_" }
+        Write-Utf8Text (Join-Path $CacheDir 'packer-build.log') $packerOut
+        ($packerOut -split "`n") | ForEach-Object { Write-Host "  $_" }
     }
     if ($code -ne 0) {
         Stop-WithError "packer build 失败(退出码 $code),完整日志见 .cache\packer-build.log"
@@ -520,7 +528,7 @@ function Invoke-CloneNodes {
     Write-Step '从 k8s-base 克隆出 k8s 节点'
     foreach ($n in $Nodes) {
         $null = Copy-TemplateToNode -VmrunExe $VmrunExe -TemplateVmx $BaseVmx `
-            -VmRoot $VmRoot -Node $n -Vnet $Vmnet.Name `
+            -VmRoot $VmRoot -Node $n -Vnet $Vmnet.Vnet `
             -Gateway $TemplateGateway -Dns "$($TemplateDnsPrimary),$($TemplateDnsSecondary)"
     }
 }
@@ -606,10 +614,13 @@ else {
 $baseVmx = Join-Path $VmRoot ($BaseName + '\' + $BaseName + '.vmx')
 
 if (& $run 'base') {
+    # -Vnet 传的是 **$vmnet.Vnet**("vmnet8"),不是 $vmnet.Name
+    # ("VMware Network Adapter VMnet8")。后者是宿主机上那张网卡的
+    # 显示名,vmx 的 ethernet0.vnet 不认,网卡会落到默认网络上。
     $baseVmx = Invoke-BuildBase -VmrunExe $vmrun -TemplateVmx $templateVmx `
         -SshExe $sshExe -ScpExe $scpExe -KeyFile $SshKey -KnownHosts $KnownHosts `
-        -User $SshUser -Password $VagrantPassword -RepoRoot $RepoRoot -Base $BaseNode `
-        -Vnet $vmnet.Name -K8sMinor $K8sMinor
+        -User $SshUser -Password $VagrantPassword -RepoRoot $RepoRoot -CacheDir $CacheDir `
+        -Base $BaseNode -Vnet $vmnet.Vnet -K8sMinor $K8sMinor
 }
 
 if (& $run 'clone') {
@@ -622,9 +633,10 @@ if (& $run 'boot') {
 
 if (& $run 'k8s') {
     $ok = Invoke-K8sStage -SshExe $sshExe -ScpExe $scpExe -KeyFile $SshKey -KnownHosts $KnownHosts `
-        -User $SshUser -RepoRoot $RepoRoot -Nodes $Nodes -K8sMinor $K8sMinor `
+        -User $SshUser -RepoRoot $RepoRoot -CacheDir $CacheDir -Nodes $Nodes -K8sMinor $K8sMinor `
         -NetworkPlugin $NetworkPlugin -PodCidr $PodCidr -ServiceCidr $ServiceCidr `
-        -LoadBalancer $LoadBalancerIP -SkipCni:$SkipCni
+        -LoadBalancer $LoadBalancerIP -ShimFile (Join-Path $WorkDir 'guest\region-shim.sh') `
+        -SkipCni:$SkipCni
 }
 
 if ($Stage -eq 'destroy') {

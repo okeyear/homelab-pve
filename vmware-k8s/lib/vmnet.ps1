@@ -92,7 +92,19 @@ function Resolve-VmnetForSubnet {
 
     $nat = Get-VmnetNatSubnet
     [pscustomobject]@{
+        # 宿主机上那张虚拟网卡的**显示名**,比如
+        # "VMware Network Adapter VMnet8"。
         Name    = $match.Name
+        # VMware 自己的**网络名**,比如 "vmnet8"。
+        #
+        # 这两个不是一回事!vmx 里 ethernet0.vnet 要的是后者:
+        #
+        #     ethernet0.vnet = "vmnet8"
+        #
+        # 写成显示名("VMware Network Adapter VMnet8")VMware 认不出来,
+        # 网卡会落到默认网络上,IP 就不是我们规划的那个网段了。
+        # 用 `vmrun -T ws listHostNetworks` 可以问出准确的名字。
+        Vnet    = "vmnet$($match.Vmnet)"
         Vmnet   = $match.Vmnet
         Ip      = $match.Ip
         Prefix  = $match.PrefixLen
