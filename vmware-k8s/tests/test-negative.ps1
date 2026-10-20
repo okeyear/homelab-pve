@@ -76,7 +76,10 @@ $mutatedFiles = @(
     @{ Path = 'guest\region-shim.sh';         Bom = $false },
     # 仓库自己的 functions.sh(地区判定住在里面),路径相对于副本树,
     # ..\ 是副本树的上一级 —— 那里放的是拷进来的 setup-k8s/scripts。
-    @{ Path = '..\setup-k8s\scripts\functions.sh'; Bom = $false }
+    @{ Path = '..\setup-k8s\scripts\functions.sh'; Bom = $false },
+    # IPVS 拆除那条线的两个脚本:负例要证明"IPVS 加回来会被咬住"。
+    @{ Path = '..\setup-k8s\scripts\01-base-pkgs.sh'; Bom = $false },
+    @{ Path = '..\setup-k8s\scripts\04-kubeadm-init.sh'; Bom = $false }
 )
 $pristine = @{}
 foreach ($f in $mutatedFiles) {
@@ -227,6 +230,33 @@ $m20From = @'
 '@
 $m20To = @'
         region=$(curl_probe 'https://ipwho.is/' | grep -oE '"country_code":"[A-Z]+"' | head -n1 | cut -d'"' -f4)
+'@
+# M21:把 ipvsadm 加回基础包列表。
+# IPVS 模式在 k8s 1.37 已弃用、1.43 会被移除;而且实测这个集群的
+# kube-proxy 一直是 iptables 模式,ipvsadm 从头到尾没用过。
+$m21From = 'deb_pkgs="chrony conntrack libseccomp2'
+$m21To = 'deb_pkgs="chrony conntrack ipvsadm libseccomp2'
+# M22:把 ip_vs 模块加载加回来。
+$m22From = 'sudo rm -f /etc/modules-load.d/ipvs.conf'
+$m22To = 'sudo modprobe ip_vs && sudo rm -f /etc/modules-load.d/ipvs.conf'
+# M23:把 /etc/modules-load.d/ipvs.conf 的写入加回来。
+$m23From = 'sudo rm -f /etc/modules-load.d/ipvs.conf'
+$m23To = 'cat /etc/modules-load.d/ipvs.conf | sudo tee /etc/modules-load.d/ipvs.conf'
+# M24:把代理模式改回 ipvs。
+$m24From = 'KUBE_PROXY_MODE=iptables'
+$m24To = 'KUBE_PROXY_MODE=ipvs'
+# M25:漏掉 --kubeconfig。
+# admin.conf 是 root 权限 600,root 的 HOME 是 /root,那边没有
+# ~/.kube/config —— 漏了 kubectl 就去连 localhost:8080,报
+# "couldn't get current server API group list"。实测踩过一次。
+$m25From = 'sudo kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get cm kube-proxy'
+$m25To = 'sudo kubectl -n kube-system get cm kube-proxy'
+# M26:编排层的就绪检查里又要求 ipvsadm。
+$m26From = @'
+    'command -v containerd >/dev/null 2>&1 && ' +
+'@
+$m26To = @'
+    'command -v containerd >/dev/null 2>&1 && ' + 'command -v ipvsadm >/dev/null 2>&1 && ' +
 '@
 
 # ---------------------------------------------------------------- 负例清单
@@ -406,6 +436,60 @@ $muts = @(
         To    = $m20To
         Test  = 'tests\test-remote-cmd.ps1'
         Expect = 'ipwho.is 的提取要容忍冒号后的空格'
+    }
+    @{
+        Name  = 'M21 把 ipvsadm 加回基础包(1.37 已弃用 IPVS,实测从来没用过)'
+        File  = '..\setup-k8s\scripts\01-base-pkgs.sh'
+        From  = $m21From
+        To    = $m21To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL IPVSADM_IN_BASE_PKGS'
+    }
+    @{
+        Name  = 'M22 把 ip_vs 模块加载加回来'
+        File  = '..\setup-k8s\scripts\01-base-pkgs.sh'
+        From  = $m22From
+        To    = $m22To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL IPVS_MODULE_IN_BASE_PKGS'
+    }
+    @{
+        Name  = 'M23 把 /etc/modules-load.d/ipvs.conf 的写入加回来'
+        File  = '..\setup-k8s\scripts\01-base-pkgs.sh'
+        From  = $m23From
+        To    = $m23To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL IPVS_MODULES_FILE_IN_BASE_PKGS'
+    }
+    @{
+        Name  = 'M24 把 kube-proxy 代理模式改回 ipvs'
+        File  = '..\setup-k8s\scripts\04-kubeadm-init.sh'
+        From  = $m24From
+        To    = $m24To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL PROXY_MODE_IS_IPVS'
+    }
+    @{
+        Name  = 'M25 kubectl 漏掉 --kubeconfig(会去连 localhost:8080)'
+        File  = '..\setup-k8s\scripts\04-kubeadm-init.sh'
+        From  = $m25From
+        To    = $m25To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL KUBECTL_WITHOUT_KUBECONFIG'
+    }
+    @{
+        Name  = 'M26 编排层的就绪检查又要求 ipvsadm'
+        File  = 'lib\k8s.ps1'
+        From  = $m26From
+        To    = $m26To
+        Test  = 'tests\test-ipvs-removal.ps1'
+        Args  = @('-Root', $tree)
+        Expect = 'FAIL IPVSADM_REQUIRED_BY_ORCHESTRATOR'
     }
 )
 

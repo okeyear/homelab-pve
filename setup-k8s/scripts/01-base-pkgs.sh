@@ -6,8 +6,8 @@ export LANG=en_US.UTF8
 
 source /etc/os-release
 
-deb_pkgs="chrony conntrack ipvsadm libseccomp2 apt-transport-https lsb-release ca-certificates gnupg curl wget vim git jq"
-rpm_pkgs="chrony conntrack ipvsadm libseccomp curl wget vim git jq"
+deb_pkgs="chrony conntrack libseccomp2 apt-transport-https lsb-release ca-certificates gnupg curl wget vim git jq"
+rpm_pkgs="chrony conntrack libseccomp curl wget vim git jq"
 
 if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
     sudo apt-get update
@@ -66,50 +66,19 @@ sudo sysctl --system
 lsmod | grep br_netfilter # 查看是否加载完成
 
 
-# 安装ipvs依赖包
-# sudo yum install -y conntrack ipvsadm libseccomp
-cat <<EOF | sudo tee /etc/modules-load.d/ipvs.conf
-ip_vs
-ip_vs_rr
-ip_vs_wrr
-ip_vs_sh
-EOF
-# nf_conntrack_ipv4
-# 加载
-for x in `cat /etc/modules-load.d/ipvs.conf`; do
-    sudo modprobe $x
-done
+# ------------------------------------------------------------------
+# IPVS 相关的部分已经全部移除。
+#
+# 原因:kube-proxy 的 IPVS 模式在 Kubernetes 1.37 被正式弃用
+# (官方时间表:1.40 起 --mode 默认切 nftables,1.43 彻底移除 IPVS
+# 模式)。这条路线要退出,系统层就没必要再预装 ipvsadm,也没必要
+# 再预加载 ip_vs / ip_vs_rr / ip_vs_wrr / ip_vs_sh。
+#
+# 注意:kube-proxy 用哪种代理模式是 **kubeadm 定的**(默认 iptables),
+# 跟这里装不装内核模块是两码事 —— 不装 ip_vs 不影响集群正常跑。
+# 代理模式在 04-kubeadm-init.sh 里被显式钉成了 iptables。
+# ------------------------------------------------------------------
 
-# if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
-#     cat <<EOF | sudo tee /etc/modules-load.d/ipvs.conf
-# ip_vs
-# ip_vs_rr
-# ip_vs_wrr
-# ip_vs_sh
-# nf_conntrack_ipv4
-# EOF
-#     # 加载
-#     for x in `cat /etc/modules-load.d/ipvs.conf`; do
-#         sudo modprobe $x
-#     done
-# elif [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
-#     sudo tee /etc/sysconfig/modules/ipvs.modules <<EOF
-# modprobe -- ip_vs
-# modprobe -- ip_vs_rr
-# modprobe -- ip_vs_wrr
-# modprobe -- ip_vs_sh
-# modprobe -- nf_conntrack_ipv4
-# EOF
-
-#     sudo chmod +x /etc/sysconfig/modules/ipvs.modules
-#     # 执行脚本
-#     sudo /etc/sysconfig/modules/ipvs.modules
-
-# else
-#     echo "Unsupported OS: $ID"
-#     exit 1
-# fi
-
-
-# 验证ipvs模块
-lsmod | grep -e ip_vs -e nf_conntrack_ipv4
+# 老版本(本脚本早期版本)装过的 IPVS 残留顺手清掉,免得重启之后
+# 内核又把 ip_vs 加载上来。
+sudo rm -f /etc/modules-load.d/ipvs.conf

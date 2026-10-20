@@ -75,7 +75,7 @@ Assert-True ($r -match "grep -l '\\''x'\\''") "命令内部的单引号按 POSIX
 
 Write-Host ''
 Write-Host '=== Add-RemoteTimeout:管道也算复合 ==='
-$r = Add-RemoteTimeout -Command 'lsmod | grep ip_vs' -TimeoutSec 60
+$r = Add-RemoteTimeout -Command 'lsmod | grep br_netfilter' -TimeoutSec 60
 Assert-True ($r -match "bash -c '") "带管道的命令走 bash -c(实际: $r)"
 
 # ================================================================ 地区补丁

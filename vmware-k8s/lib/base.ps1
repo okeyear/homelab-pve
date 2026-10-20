@@ -12,7 +12,7 @@
 #   3. 推 guest/base-setup.sh 过去跑(换 apt 源、确认 cloud-init、
 #      装 clone-prep、写免密 sudo、打封存标记)
 #   4. 推仓库里现成的 setup-k8s/scripts 过去跑(基础包、containerd、
-#      k8s 组件)—— 那些脚本一个字都没改
+#      k8s 组件)—— 只在用户明确要求的地方改过(地区判定、拆 IPVS)
 #   5. 关机。关掉的这台就是"k8s 基础镜像",后面三个节点从它克隆
 #
 # 为什么要有这一层:
@@ -184,7 +184,7 @@ function Invoke-BuildBase {
     Write-Ok '基础镜像配置完成'
 
     # ---- 7. 基础包 / containerd / k8s 组件 ----
-    # 复用仓库里现成的脚本,一个字都没改。
+    # 复用仓库里现成的脚本(只在用户明确要求的地方改过)。
     #
     # 这些脚本内部自己会调 sudo。base-setup.sh 已经把免密 sudo 配好
     # 了,所以这里不用再喂密码 —— 就算 base-setup.sh 没配成功,
@@ -239,10 +239,10 @@ function Invoke-BuildBase {
     if (-not (Test-K8sPrepReady -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $ip)) {
         Stop-WithError ("基础组件没装好" +
             $(if ($failedScripts.Count) { "(失败/可疑的脚本: $($failedScripts -join ', '))" } else { '' }) +
-            "`n    缺 kubeadm / containerd / ipvsadm / chronyc 里的哪个,或者" +
+            "`n    缺 kubeadm / containerd / chronyc 里的哪个,或者" +
             "`n    ip_forward / bridge-nf-call-iptables 没生效。")
     }
-    Write-Ok '基础组件已就位(kubeadm / containerd / ipvsadm / chronyc + 内核参数)'
+    Write-Ok '基础组件已就位(kubeadm / containerd / chronyc + 内核参数)'
 
     # ---- 8. 关机 ----
     Write-Step "关掉 $($Base.Name)(关掉之后它就是 k8s 基础镜像)"

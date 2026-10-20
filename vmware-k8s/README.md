@@ -187,15 +187,17 @@ guest/clone-prep.service
 
 ## 复用了仓库的哪些东西
 
-`setup-k8s/scripts/*.sh` **一个字都没改**,Windows 侧只是把 `main.sh` 在 Linux 上
-做的事换了个传输方式(main.sh 用 rsync,这里用 scp):
+`setup-k8s/scripts/*.sh` 直接拿来用,Windows 侧只是把 `main.sh` 在 Linux 上
+做的事换了个传输方式(main.sh 用 rsync,这里用 scp)。仓库脚本只在**用户明确
+要求**的地方动过(地区判定、拆掉 IPVS、钉死 kube-proxy 代理模式),其余逻辑
+一个字不改:
 
 | 脚本 | 在哪一层跑 |
 |---|---|
-| `01-base-pkgs.sh` 基础包、chrony、内核模块、sysctl | base |
+| `01-base-pkgs.sh` 基础包、chrony、内核模块、sysctl(不再装 IPVS) | base |
 | `02-2-containerd.sh` containerd | base |
 | `03-kubelet.sh` kubelet / kubectl / kubeadm | base |
-| `04-kubeadm-init.sh` kubeadm init(master) | k8s |
+| `04-kubeadm-init.sh` kubeadm init(master)+ 钉死 kube-proxy 代理模式 | k8s |
 | `07-k8s-worker.sh` join(现场生成) | k8s |
 | `08-2-cni-calico.sh` CNI | k8s |
 
@@ -240,6 +242,62 @@ containerd 会一直重试,`kubeadm init` 永远不返回;节点则因为拿不�
 注入 —— `guest/region-shim.sh` 用一个 shell 函数把这四个探测地址都拦下来
 返回固定的国家码,别的 `curl` 调用用 `command curl` 原样放行。
 问不到就用缓存,再问不到就当 CN。
+
+### IPVS:拆掉了 —— 而且本来就没在用
+
+kube-proxy 的 IPVS 模式在 **Kubernetes 1.37 被正式弃用**(官方时间表:
+1.40 起 `--mode` 默认切 nftables,1.43 彻底移除 IPVS 模式)。所以
+`setup-k8s/scripts/01-base-pkgs.sh` 里那一整套 IPVS 逻辑全部拆掉了:
+
+| 原来 | 现在 |
+|---|---|
+| 包列表里的 `ipvsadm` | 没了 |
+| 写 `/etc/modules-load.d/ipvs.conf` + `modprobe ip_vs*` | 没了,只 `rm -f` 掉老版本留下的残留 |
+| 结尾的 `lsmod \| grep -e ip_vs -e nf_conntrack_ipv4` 校验 | 没了 |
+
+**关键在于:这个集群的 kube-proxy 从来就没用过 IPVS。** kubeadm 写进
+kube-proxy ConfigMap 的 `mode` 字段是**空的**,而 kube-proxy 把空值当成
+`iptables`(v1.34.12 实测)。也就是说,以前装的 `ip_vs*` 内核模块和
+`ipvsadm` 是**纯死重**,数据面压根没碰过 —— 拆掉它对集群零影响。
+
+但空值本身是个雷:1.37 起空值会被判为即将过期并打告警,1.40 起默认值改成
+nftables —— **升级一次,数据面就悄悄换掉了**。所以
+`setup-k8s/scripts/04-kubeadm-init.sh` 里把模式显式钉死:
+
+```bash
+KUBE_PROXY_MODE=iptables
+sudo kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get cm kube-proxy -o yaml > /tmp/kube-proxy-cm.yaml
+sudo sed -i "s/^\( *\)mode: \"\"$/\1mode: \"${KUBE_PROXY_MODE}\"/" /tmp/kube-proxy-cm.yaml
+sudo kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /tmp/kube-proxy-cm.yaml
+sudo kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system rollout restart ds/kube-proxy
+```
+
+想换 nftables 就改 `KUBE_PROXY_MODE` 那一行。
+
+> **每条 `kubectl` 都必须带 `--kubeconfig`**:admin.conf 是 root 权限 600,
+> 而 root 的 `HOME` 是 `/root`,那边没有 `~/.kube/config` —— 漏了 kubectl 就
+> 去连 `localhost:8080`,报
+> `couldn't get current server API group list`。这个坑实跑时踩过一次,
+> `tests/test-ipvs-removal.ps1` 现在专门盯着它。
+
+`tests/test-ipvs-removal.ps1` 是这条线的护栏(20 项断言),否定测试里的
+M21–M26 会把 IPVS 一个个加回去,要求检查必须报红。
+
+### CNI 下载会被代理 reset,编排层会重试
+
+`08-2-cni-calico.sh` 要通过 `GHPROXY` 拿 calico 的 manifest,而国内代理
+偶尔会把连接 reset 掉(`curl: (56) Recv failure`)。仓库脚本没有 `set -e`,
+于是它接着往下跑,最后报出来的是:
+
+```
+sed: can't read calico.yaml: No such file or directory
+error: the path "calico.yaml" does not exist
+```
+
+看着像路径写错了,真凶是**下载失败**。编排层因此会重跑整个 CNI 脚本
+(`apply` 是幂等的,重跑没副作用),最多 3 次,并且每次重跑之前先删掉上
+一次留下的半截文件 —— 拿一个只下了一半的 manifest 去 `apply`,报错会指向
+完全不相干的地方。
 
 ### k8s 阶段可以重跑
 
@@ -288,6 +346,7 @@ vmware-k8s/
 │   ├── test-vmnet-lease.ps1     DHCP 池范围读取 + 地址冲突判断
 │   ├── test-node-defs.ps1       节点定义 / MAC 推导 / .vmx 改写
 │   ├── test-k8s-config.ps1      生成的 setup-k8s/config.sh 对不对
+│   ├── test-ipvs-removal.ps1    IPVS 拆除的回归护栏(见下)
 │   ├── test-packer-validate.ps1 packer validate + fmt
 │   └── test-negative.ps1        否定测试:把代码改坏,要求检查必须报错
 └── .cache/                      运行时生成:packer、ISO、known_hosts、状态

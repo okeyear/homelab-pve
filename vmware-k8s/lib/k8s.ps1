@@ -1,8 +1,11 @@
 ﻿# vmware-k8s — 用仓库里现成的 setup-k8s 脚本把集群搭起来
 #
-# 复用策略:setup-k8s/scripts/*.sh 一个字都不改,Windows 这边只做
+# 复用策略:仓库里 setup-k8s/scripts/*.sh 直接拿来用,Windows 这边只做
 # main.sh 在 Linux 上做的同一件事 —— 把脚本推过去、用 ssh 跑。
 # 唯一区别是传输方式:main.sh 用 rsync,这里用 scp(Windows 自带)。
+#
+# 例外:仓库脚本只在**用户明确要求**的地方动过(地区判定、拆掉 IPVS、
+# 钉死 kube-proxy 代理模式),其余逻辑一个字不改。
 #
 # 有一处 main.sh 没做的事:装 CNI。main.sh 跑完 join 就结束了,
 # 第 57 行还留着 "# todo: which cni plugin to use",集群会停在
@@ -196,19 +199,21 @@ function Test-K8sPrepReady {
 
         01-base-pkgs.sh 的最后一条是:
 
-            lsmod | grep -e ip_vs -e nf_conntrack_ipv4
+            sudo rm -f /etc/modules-load.d/ipvs.conf
 
-        新内核里 nf_conntrack_ipv4 已经被并进 nf_conntrack(没有这个
-        模块文件了),ip_vs 在某些内核上是**编进内核**而不是做成模块。
-        这两种情况下 grep 什么都匹配不到,退出码就是 1 ——
-        可该装的包一个都不少。
+        (以前是 `lsmod | grep -e ip_vs -e nf_conntrack_ipv4` —— 新内核里
+        nf_conntrack_ipv4 已经被并进 nf_conntrack(没有这个模块文件了),
+        ip_vs 在某些内核上是**编进内核**而不是做成模块。这两种情况下
+        grep 什么都匹配不到,退出码就是 1 —— 可该装的包一个都不少。
+        IPVS 那部分拆掉之后换成一条 rm,退出码倒是稳了,但仍然不能
+        只看退出码。)
 
         02-2-containerd.sh 的最后一条是拉一个 busybox 测试镜像,
         镜像站抽风就非零退出,可 containerd 本身装得好好的。
 
         所以**不看退出码,看实际状态** —— 这些才是真正决定集群能不能
         起来的东西:
-          - kubeadm / containerd / ipvsadm / chronyc 装上了吗
+          - kubeadm / containerd / chronyc 装上了吗
           - ip_forward 和 bridge-nf-call-iptables 生效了吗
 
       .OUTPUTS
@@ -224,7 +229,6 @@ function Test-K8sPrepReady {
     # 内层双引号会被转义,远端 shell 看到的东西就不对了。
     $cmd = 'command -v kubeadm >/dev/null 2>&1 && ' +
     'command -v containerd >/dev/null 2>&1 && ' +
-    'command -v ipvsadm >/dev/null 2>&1 && ' +
     'command -v chronyc >/dev/null 2>&1 && ' +
     'sysctl -n net.ipv4.ip_forward | grep -qx 1 && ' +
     'sysctl -n net.bridge.bridge-nf-call-iptables | grep -qx 1 && ' +
@@ -1081,12 +1085,39 @@ function Invoke-K8sStage {
         Write-Step "安装 CNI: $NetworkPlugin ($cniScript)"
         # CNI 脚本要 curl raw.githubusercontent.com 拿 manifest,
         # 走地区补丁里的 GHPROXY,所以也用 Invoke-RepoScript。
-        $r = Invoke-RepoScript -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $master.Address `
-            -Script "/tmp/setup-k8s/scripts/$cniScript" -TimeoutSec 900 `
-            -WorkingDir '/tmp/setup-k8s/scripts'
-        if ($r.ExitCode -ne 0) {
+        #
+        # 为什么要重试:2026-10-20 实跑时,ghfast.top 把连接 reset 了
+        # (curl: (56) Recv failure),manifest 下了 0 字节。仓库脚本
+        # 没有 set -e,于是它接着往下跑,最后报出来的是
+        #     error: the path "calico.yaml" does not exist
+        # —— 看着像路径写错了,真凶是下载。换成别的代理、或者过几分钟
+        # 再试,就又好了。
+        #
+        # 所以这里重跑整个脚本(apply 是幂等的,重跑没有副作用),
+        # 并且每次重跑之前先把上一次的半截文件删掉 —— 拿一个只下了
+        # 一半的 manifest 去 apply,报错会指向完全不相干的地方。
+        $cniAttempts = 3
+        $cniOk = $false
+        for ($i = 1; $i -le $cniAttempts; $i++) {
+            if ($NetworkPlugin -eq 'calico') {
+                $null = Invoke-Ssh -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $master.Address `
+                    -Command 'rm -f /tmp/setup-k8s/scripts/calico.yaml /tmp/setup-k8s/scripts/calico.yaml.bak' `
+                    -TimeoutSec 60
+            }
+            if ($i -gt 1) {
+                Write-Note "CNI 安装没成功,重试(第 $i 次 / 共 $cniAttempts 次)"
+            }
+            $r = Invoke-RepoScript -SshExe $SshExe -SshArgs $sshArgs -User $User -Host_ $master.Address `
+                -Script "/tmp/setup-k8s/scripts/$cniScript" -TimeoutSec 900 `
+                -WorkingDir '/tmp/setup-k8s/scripts'
+            if ($r.ExitCode -eq 0) {
+                $cniOk = $true
+                break
+            }
             ($r.Output -split "`n" | Select-Object -Last 30) | ForEach-Object { Write-Host "        $_" }
-            Stop-WithError 'CNI 安装失败'
+        }
+        if (-not $cniOk) {
+            Stop-WithError "CNI 安装失败(重试 $cniAttempts 次都是这个结果)"
         }
         Write-Ok 'CNI 安装完成'
 

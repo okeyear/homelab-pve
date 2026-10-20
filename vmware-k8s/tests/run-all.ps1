@@ -48,6 +48,8 @@ Invoke-TestFile 'node-defs' (Join-Path $TestDir 'test-node-defs.ps1')
 Invoke-TestFile 'k8s-config' (Join-Path $TestDir 'test-k8s-config.ps1')
 # ---- 6.5 远端命令包装 + 地区补丁 ----
 Invoke-TestFile 'remote-cmd' (Join-Path $TestDir 'test-remote-cmd.ps1')
+# ---- 6.6 IPVS 拆除的回归护栏(部署脚本里不许再有 IPVS)----
+Invoke-TestFile 'ipvs-removal' (Join-Path $TestDir 'test-ipvs-removal.ps1')
 # ---- 7. packer 模板(需要 .cache\packer\packer.exe)----
 $packerExe = Join-Path $WorkDir '.cache\packer\packer.exe'
 if (Test-Path -LiteralPath $packerExe) {
