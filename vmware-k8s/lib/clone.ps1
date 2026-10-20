@@ -402,13 +402,63 @@ function Expand-NodeDisk {
     Write-Ok "磁盘已扩到 $targetMB MB ($($Node.DiskGB) GB)"
 }
 
-function Start-NodeVm {
+function Test-NodeVmRunning {
+    <#
+      .SYNOPSIS
+        这台节点是不是已经在跑了。
+      .DESCRIPTION
+        `vmrun list` 只列正在跑的 VM,按 vmx 路径匹配。
+    #>
     param(
         [Parameter(Mandatory)][string]$VmrunExe,
-        [Parameter(Mandatory)][object]$Node
+        [Parameter(Mandatory)][string]$Vmx
     )
-    Write-Info "启动 $($Node.Name)"
-    $r = Invoke-Vmrun -VmrunExe $VmrunExe -Arguments @('start', $Node.Vmx, 'nogui')
+    $r = Invoke-Vmrun -VmrunExe $VmrunExe -Arguments @('list')
+    $hit = @($r.Output -split "`n" | Where-Object { $_.Trim() -like "*$Vmx*" })
+    return ($hit.Count -gt 0)
+}
+
+function Start-NodeVm {
+    <#
+      .SYNOPSIS
+        启动一台节点。
+
+      .DESCRIPTION
+        默认用 nogui 启动 —— 跑流水线的时候不需要窗口,也不怕
+        图形界面接管(Workstation 对"不在库里、又是 vmrun 起的"机器,
+        会在它关机时把整个目录当临时产物清掉,实测 20G 的盘一起没了)。
+
+        -Gui 改成带控制台启动:节点会出现在 VMware Workstation 的
+        库里,并且有实时画面。已经在跑的机器会先停掉再带控制台重启
+        —— nogui 起的机器,Workstation 那边只有一幅旧画面。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$VmrunExe,
+        [Parameter(Mandatory)][object]$Node,
+        [switch]$Gui
+    )
+    $mode = if ($Gui) { 'gui' } else { 'nogui' }
+
+    if (Test-NodeVmRunning -VmrunExe $VmrunExe -Vmx $Node.Vmx) {
+        if (-not $Gui) {
+            Write-Ok "$($Node.Name) 已经在跑,跳过启动"
+            return
+        }
+        Write-Info "$($Node.Name) 已经在跑,先停掉再带控制台重启"
+        $null = Invoke-Vmrun -VmrunExe $VmrunExe -Arguments @('stop', $Node.Vmx, 'soft')
+        for ($i = 0; $i -lt 30; $i++) {
+            if (-not (Test-NodeVmRunning -VmrunExe $VmrunExe -Vmx $Node.Vmx)) { break }
+            Start-Sleep -Seconds 2
+        }
+        if (Test-NodeVmRunning -VmrunExe $VmrunExe -Vmx $Node.Vmx) {
+            Write-Note "$($Node.Name) 停不掉,硬停"
+            $null = Invoke-Vmrun -VmrunExe $VmrunExe -Arguments @('stop', $Node.Vmx, 'hard')
+            Start-Sleep -Seconds 3
+        }
+    }
+
+    Write-Info "启动 $($Node.Name) (模式 $mode)"
+    $r = Invoke-Vmrun -VmrunExe $VmrunExe -Arguments @('start', $Node.Vmx, $mode)
     if ($r.ExitCode -ne 0) {
         Stop-WithError "启动 $($Node.Name) 失败:`n$($r.Output)"
     }

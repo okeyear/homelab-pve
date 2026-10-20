@@ -39,6 +39,18 @@ New-Item -ItemType Directory -Path $tree -Force | Out-Null
 $rc = & robocopy.exe $WorkDir $tree /E /XD '.cache' /NFL /NDL /NJH /NJS /NP /R:1 /W:1
 if ($LASTEXITCODE -ge 8) { throw "robocopy 失败(退出码 $LASTEXITCODE)" }
 
+# 仓库的 setup-k8s/scripts 也要拷一份进来。
+# 地区判定(detect_region)就住在 functions.sh 里,有些负例要改它;
+# 测试里按 "<上一级>/setup-k8s/scripts" 找 —— 副本的上一级正好是 $sandbox。
+$repoRoot = Split-Path -Parent $WorkDir
+$repoScripts = Join-Path $repoRoot 'setup-k8s\scripts'
+if (Test-Path -LiteralPath $repoScripts) {
+    $dst = Join-Path $sandbox 'setup-k8s\scripts'
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    $rc = & robocopy.exe $repoScripts $dst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+    if ($LASTEXITCODE -ge 8) { throw "robocopy setup-k8s 失败(退出码 $LASTEXITCODE)" }
+}
+
 # packer 校验那条负例要用到 packer.exe,单独拷一份进去
 $packerSrc = Join-Path $WorkDir '.cache\packer\packer.exe'
 if (Test-Path -LiteralPath $packerSrc) {
@@ -61,7 +73,10 @@ $mutatedFiles = @(
     @{ Path = 'tests\test-packer-validate.ps1'; Bom = $true },
     @{ Path = 'packer\http\user-data';        Bom = $false },
     @{ Path = 'guest\base-setup.sh';          Bom = $false },
-    @{ Path = 'guest\region-shim.sh';         Bom = $false }
+    @{ Path = 'guest\region-shim.sh';         Bom = $false },
+    # 仓库自己的 functions.sh(地区判定住在里面),路径相对于副本树,
+    # ..\ 是副本树的上一级 —— 那里放的是拷进来的 setup-k8s/scripts。
+    @{ Path = '..\setup-k8s\scripts\functions.sh'; Bom = $false }
 )
 $pristine = @{}
 foreach ($f in $mutatedFiles) {
@@ -202,6 +217,16 @@ $m19From = @'
 '@
 $m19To = @'
     curl "$@"
+'@
+# M20:把 ipwho.is 的提取模式改回不容忍空格的老写法。
+# ipwho.is 返回的是**缩进** JSON("country_code": "CN",),冒号后面
+# 有一个空格,老的 '"country_code":"[A-Z]+"' 匹配不到 —— 那个源等于
+# 白问。这是照着用户给的实现时实测发现的。
+$m20From = @'
+        region=$(curl_probe 'https://ipwho.is/' | grep -oE '"country_code":[[:space:]]*"[A-Z]+"' | head -n1 | cut -d'"' -f4)
+'@
+$m20To = @'
+        region=$(curl_probe 'https://ipwho.is/' | grep -oE '"country_code":"[A-Z]+"' | head -n1 | cut -d'"' -f4)
 '@
 
 # ---------------------------------------------------------------- 负例清单
@@ -373,6 +398,14 @@ $muts = @(
         To    = $m19To
         Test  = 'tests\test-remote-cmd.ps1'
         Expect = '其他调用用 command curl 原样放行'
+    }
+    @{
+        Name  = 'M20 ipwho.is 的提取不容忍空格(缩进 JSON 匹配不到,那个源白问)'
+        File  = '..\setup-k8s\scripts\functions.sh'
+        From  = $m20From
+        To    = $m20To
+        Test  = 'tests\test-remote-cmd.ps1'
+        Expect = 'ipwho.is 的提取要容忍冒号后的空格'
     }
 )
 

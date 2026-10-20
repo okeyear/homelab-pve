@@ -66,6 +66,16 @@ vmware-k8s\build.cmd -Stage preflight
 | k8s | 复用 `setup-k8s` 脚本装集群 | 10-20 分钟 |
 
 单跑某一阶段:`build.cmd -Stage base` / `-Stage clone` / `-Stage k8s` ……
+机器放在 `D:\vmware-k8s\` 下(改 `build.ps1` 的 `$VmRoot`)。默认是用
+`vmrun` **静默**启动的(`nogui`),所以在 VMware Workstation 的库里
+**看不到**它们。想看着它们跑:
+
+```cmd
+vmware-k8s\build.cmd -Stage boot -ShowConsole
+```
+
+这台机器会带控制台重启(已经在跑的就先停掉),之后三台都会出现在
+VMware Workstation 的库里,并且有实时画面。
 
 ---
 
@@ -199,27 +209,37 @@ base 层装好的东西,节点克隆过来就有了;k8s 阶段会**先探测**�
 装完之后会写出 `setup-k8s/config.sh`,记录这次的 IP 和参数,之后想在一台 Linux 上
 接着用 `setup-k8s/main.sh` 管理这个集群也有据可依。
 
-### 地区判断:仓库脚本自己会问 ipinfo.io(然后判错)
+### 地区判断:问四家,谁先答出国家码就用谁
 
-`setup-k8s/scripts/functions.sh` 靠这一行决定用不用国内镜像源:
+`setup-k8s/scripts/functions.sh` 靠这一段决定用不用国内镜像源:
 
 ```bash
-REGION=$(curl -s ipinfo.io | grep -oP '(?<=country": ").*?(?=",)')
+REGION=$(detect_region)
 ```
 
-ipinfo.io 对匿名请求会限流,返回的内容里没有 `country` 字段时 `REGION` 就是空,
-脚本会走 else 分支改用 `registry.k8s.io` 拉控制面镜像。
+`detect_region()` 一家一家问过去,谁先答出合法的两字母国家码就用谁,最多问三轮:
 
-**这个选择的代价极大**:`registry.k8s.io` 的 manifest 请求会 307 跳到
+| 源 | 协议 | 提取 |
+|---|---|---|
+| `ipinfo.io/country` | https | 纯文本国家码 |
+| `ipwho.is` | https | `"country_code": "CN"`(**缩进 JSON,冒号后有空格**) |
+| `sysad.win` | **http** | `"iso_code":"CN"`(https 证书主机名不匹配) |
+| `ip-api.com/json` | **http** | `"countryCode":"CN"`(https 免费端点 403) |
+
+四家都问不到时,还有一层兜底:直接问国内镜像源通不通,通就当 CN ——
+**地区判错的后果是 `kubeadm init` 拉不到镜像一直挂着**,宁可慢也不能挂。
+
+为什么非得判对:`registry.k8s.io` 的 manifest 请求会 307 跳到
 `europe-west3-docker.pkg.dev`,这个域名在国内是 `connection refused`,
 containerd 会一直重试,`kubeadm init` 永远不返回;节点则因为拿不到
 `/var/lib/kubelet/config.yaml` 一直崩溃重启(日志里只写
 `failed to load kubelet config file`,完全看不出是镜像拉不下来)。
 
-所以 k8s 阶段会**先自己问一次**地区(问不到就用缓存,再问不到就当 CN),
-再用 `BASH_ENV` 把结果注入给仓库脚本 —— `guest/region-shim.sh` 用一个
-shell 函数把 `curl ipinfo.io` 拦下来返回固定的国家代码,别的 `curl`
-调用用 `command curl` 原样放行。**仓库里的脚本一个字都不用改。**
+即便如此,VMware 这条链路还是**再补了一层**:k8s 阶段会先在 guest 上
+真的跑一次仓库的 `detect_region()`,把结果**固定**下来,再用 `BASH_ENV`
+注入 —— `guest/region-shim.sh` 用一个 shell 函数把这四个探测地址都拦下来
+返回固定的国家码,别的 `curl` 调用用 `command curl` 原样放行。
+问不到就用缓存,再问不到就当 CN。
 
 ### k8s 阶段可以重跑
 

@@ -346,10 +346,47 @@ printf 'ARTIFACT|service|containerd.service|https://raw.githubusercontent.com/co
     Write-Ok ("安装包已推送到 {0}(脚本会跳过下载)" -f $RemoteDir)
 }
 
+function Get-NotReadySystemPods {
+    <#
+      .SYNOPSIS
+        从 `kubectl get pods -A --no-headers` 的输出里，挑出
+        kube-system 里**还没真正跑起来**的 pod。
+
+      .DESCRIPTION
+        单独拎出来是为了能直接测(不需要连集群)。
+
+        为什么要单独看 pod:节点显示 Ready **不等于**集群可用。
+        节点 Ready 是 kubelet 自己报的,跟网络插件没关系 —— 2026-10-20
+        实跑就撞到过:calico-node 三个 pod 全卡在 Init:ErrImagePull,
+        节点却三个都是 Ready,阶段于是报"成功"退出,可集群根本没网。
+
+        判据(pod 那一行是: NAMESPACE NAME READY STATUS RESTARTS AGE ...):
+          - STATUS 必须是 Running
+          - READY 必须是 N/N(全就绪),不是 0/1
+          - Completed 的 pod 跳过(跑完就走的,不是常驻的)
+    #>
+    param([string[]]$PodLines)
+
+    $bad = @()
+    foreach ($line in $PodLines) {
+        if ($line -notmatch '^kube-system\s') { continue }
+        $p = @($line -split '\s+' | Where-Object { $_ -ne '' })
+        if ($p.Count -lt 4) { $bad += $line; continue }
+        $readyCol = $p[2]
+        $statusCol = $p[3]
+        if ($statusCol -eq 'Completed') { continue }
+        if ($statusCol -ne 'Running') { $bad += $line; continue }
+        # READY 必须是 N/N,0/1 也不算就绪
+        if ($readyCol -notmatch '^(\d+)/\1$') { $bad += $line; continue }
+    }
+    return $bad
+}
+
 function Get-ClusterState {
     <#
       .SYNOPSIS
-        看一眼集群现在的状态:节点有没有全 Ready、有没有 pod 卡在拉镜像。
+        看一眼集群现在的状态:节点有没有全 Ready、pod 有没有卡在拉镜像、
+        kube-system 的 pod 有没有都跑起来。
 
       .DESCRIPTION
         两条命令都是 --no-headers 的纯文本输出,拉回宿主机上解析 ——
@@ -372,6 +409,7 @@ function Get-ClusterState {
 
     $notReady = @($nodeLines | Where-Object { $_ -notmatch '\sReady\s' })
     $pullFail = @($podLines | Where-Object { $_ -match 'ImagePullBackOff|ErrImagePull|ImagePullError' })
+    $sysBad = @(Get-NotReadySystemPods -PodLines $podLines)
     [pscustomobject]@{
         NodeLines = $nodeLines
         PodLines  = $podLines
@@ -379,6 +417,10 @@ function Get-ClusterState {
         AllReady  = ($nodeLines.Count -gt 0 -and $notReady.Count -eq 0)
         PullFailed = ($pullFail.Count -gt 0)
         PullFailing = $pullFail
+        # 节点 Ready 只是 kubelet 自己报的,跟网络插件没关系 ——
+        # 集群"真能用"还得看 kube-system 的 pod 有没有都跑起来。
+        SystemPodsReady = ($sysBad.Count -eq 0)
+        SystemBadPods   = $sysBad
     }
 }
 
@@ -406,9 +448,9 @@ function Wait-ClusterReady {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $last = ''
     $lastPull = @()
+    $lastBad = @()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
         $st = Get-ClusterState -SshExe $SshExe -SshArgs $SshArgs -User $User -Host_ $Host_
-        if ($st.AllReady) { return 'READY' }
         if ($st.PullFailed) {
             $lastPull = @($st.PullFailing | Select-Object -First 6)
             if (-not $IgnorePullFailure) {
@@ -418,10 +460,19 @@ function Wait-ClusterReady {
             }
             Write-Info '还有 pod 在拉镜像(已忽略这个信号,继续等)'
         }
+        # 判据是"节点全 Ready **而且** kube-system 的 pod 都跑起来"。
+        # 只看节点会误判:节点 Ready 是 kubelet 自己报的,calico 没装好
+        # 的时候三个节点照样都是 Ready,可集群根本没有网络。
+        if ($st.AllReady -and $st.SystemPodsReady) { return 'READY' }
+        $lastBad = @($st.SystemBadPods | Select-Object -First 6)
         $last = ($st.NodeLines -join ' | ')
         Start-Sleep -Seconds 10
     }
     Write-Fail "集群在 $TimeoutSec 秒内没就绪: $last"
+    if ($lastBad.Count -gt 0) {
+        Write-Fail 'kube-system 里还没跑起来的 pod:'
+        $lastBad | ForEach-Object { Write-Host "       $_" }
+    }
     if ($lastPull.Count -gt 0) {
         Write-Fail '最后看到的拉镜像失败:'
         $lastPull | ForEach-Object { Write-Host "       $_" }
@@ -587,10 +638,14 @@ function Resolve-Region {
         判定这台机器算不算"在国内",返回国家代码(默认 CN)。
 
       .DESCRIPTION
-        仓库的 setup-k8s/scripts/functions.sh 自己会问一次 ipinfo.io,
-        但那次问的结果**不可靠**:ipinfo.io 对匿名请求会限流,拿不到
-        country 字段的时候 REGION 就是空,脚本会走 else 分支改用
-        registry.k8s.io 拉控制面镜像。
+        **直接问 guest 上仓库自己的 detect_region()** —— 不另写一套探测
+        逻辑,免得两边判出不一样的结果。
+
+        仓库的 setup-k8s/scripts/functions.sh 里现在有 detect_region():
+        一家一家问过去(ipinfo.io / ipwho.is / sysad.win / ip-api.com),
+        谁先答出合法国家码就用谁。这已经比"只问 ipinfo.io"稳得多,
+        但仍然是看运气 —— 四家全挂时 REGION 是空,脚本会走 else 分支
+        改用 registry.k8s.io 拉控制面镜像。
 
         而 registry.k8s.io 的 manifest 请求会 307 跳到
         europe-west3-docker.pkg.dev —— 这个域名在国内是
@@ -598,8 +653,8 @@ function Resolve-Region {
         永远不返回,节点则因为拿不到 /var/lib/kubelet/config.yaml
         一直崩溃重启。
 
-        所以这里在宿主机这边先问一次,把结果**固定**下来,再用
-        BASH_ENV 注入给仓库脚本(见 guest/region-shim.sh)。
+        所以这里问一次,把结果**固定**下来,再用 BASH_ENV 注入给
+        仓库脚本(见 guest/region-shim.sh)。
         问不到就用缓存,再问不到就默认 CN —— 阿里云的镜像源在
         境外也能用,当 CN 处理不会把流程卡死。
 
@@ -622,16 +677,18 @@ function Resolve-Region {
         $cacheFile = Join-Path $stateDir 'region.txt'
     }
 
-    # ---- 1. 问 guest ----
+    # ---- 1. 问 guest:跑仓库自己的 detect_region ----
+    #
+    # source 的输出全部丢掉(它里面还有 color_echo 之类的东西),
+    # 只留 detect_region 打印出来的那两三个字母。
     # 命令里不带双引号(远端命令要穿过 ssh 客户端的引号处理)。
-    # 内层的 timeout 20 是防 curl 卡死 —— ipinfo.io 偶尔会连上
-    # 但一个字节都不回。
+    $cmd = 'cd /tmp/setup-k8s/scripts && source ./functions.sh >/dev/null 2>&1 && detect_region'
     $r = Invoke-Ssh -SshExe $SshExe -SshArgs $SshArgs -User $User -Host_ $Host_ `
-        -Command 'timeout 20 curl -s https://ipinfo.io' -TimeoutSec 60
-    $m = [regex]::Match([string]$r.Output, '"country"\s*:\s*"([A-Za-z]{2})"')
+        -Command $cmd -TimeoutSec 300
+    $m = [regex]::Match([string]$r.Output, '(?m)^([A-Z]{2})\s*$')
     if ($m.Success) {
         $region = $m.Groups[1].Value.ToUpperInvariant()
-        Write-Ok "地区判定: $region(来自 guest 实测)"
+        Write-Ok "地区判定: $region(guest 上跑仓库的 detect_region)"
         if ($cacheFile) { Write-Utf8Text $cacheFile $region }
         return $region
     }
@@ -808,23 +865,10 @@ function Invoke-K8sStage {
     }
     $master = $masters[0]
 
-    # ---- 0. 地区判定 + 注入补丁 ----
-    #
-    # 仓库的 functions.sh 用 `curl -s ipinfo.io` 判断自己在不在国内,
-    # 判错了就改用 registry.k8s.io 拉控制面镜像 —— 那个地址的 manifest
-    # 请求会 307 跳到 europe-west3-docker.pkg.dev,国内是 connection
-    # refused,containerd 无限重试,kubeadm init 永远不返回。
-    #
-    # 这里先自己问一次(问不到就用缓存/默认 CN),再用 BASH_ENV 把结果
-    # 注入给仓库脚本。仓库里的脚本一个字都不用改。
-    Write-Step '判定地区并注入补丁'
-    $region = Resolve-Region -SshExe $SshExe -SshArgs $sshArgs -User $User `
-        -Host_ $master.Address -CacheDir $CacheDir
-    if (-not (Test-Path -LiteralPath $ShimFile)) {
-        Stop-WithError "找不到地区补丁脚本: $ShimFile"
-    }
-
     # ---- 1. 把 setup-k8s 推到每个节点 ----
+    #
+    # 顺序有讲究:地区判定要靠仓库自己的 detect_region(),而它就在
+    # setup-k8s/scripts/functions.sh 里 —— 所以得先把脚本推上去。
     Write-Step '推送 setup-k8s 到各节点'
     foreach ($n in $Nodes) {
         $r = Invoke-ScpTo -ScpExe $ScpExe -SshArgs $sshArgs -User $User -Host_ $n.Address `
@@ -843,9 +887,29 @@ function Invoke-K8sStage {
         if ($r.ExitCode -ne 0) {
             Stop-WithError "在 $($n.Address) 上归一化换行符失败:`n$($r.Output)"
         }
+        Write-Ok "已推送 -> $($n.Address)"
+    }
+
+    # ---- 2. 地区判定 + 注入补丁 ----
+    #
+    # 仓库的 functions.sh 用 detect_region() 判断自己在不在国内(问四家,
+    # 谁先答出国家码就用谁)。它已经比"只问 ipinfo.io"稳,但仍然是
+    # 看运气 —— 四家全挂时 REGION 是空,脚本会改用 registry.k8s.io 拉
+    # 控制面镜像,而那个地址的 manifest 请求会 307 跳到
+    # europe-west3-docker.pkg.dev,国内是 connection refused,
+    # containerd 无限重试,kubeadm init 永远不返回。
+    #
+    # 这里先在 guest 上真的问一次(问不到就用缓存/默认 CN),再用
+    # BASH_ENV 把结果固定下来注入给仓库脚本。
+    Write-Step '判定地区并注入补丁'
+    $region = Resolve-Region -SshExe $SshExe -SshArgs $sshArgs -User $User `
+        -Host_ $master.Address -CacheDir $CacheDir
+    if (-not (Test-Path -LiteralPath $ShimFile)) {
+        Stop-WithError "找不到地区补丁脚本: $ShimFile"
+    }
+    foreach ($n in $Nodes) {
         $null = Install-RegionShim -SshExe $SshExe -SshArgs $sshArgs -ScpExe $ScpExe `
             -User $User -Host_ $n.Address -ShimFile $ShimFile -Region $region
-        Write-Ok "已推送 -> $($n.Address)"
     }
 
     # ---- 2. 清掉上一次留下的集群痕迹 ----

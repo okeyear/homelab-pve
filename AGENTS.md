@@ -15,9 +15,13 @@
 
 ## K8s setup quirks
 - `setup-k8s/scripts/functions.sh` auto-chooses `GHPROXY`/mirrors based on country code; do not assume raw GitHub URLs are used everywhere.
+- The country code comes from `functions.sh`'s `detect_region()`: it queries `ipinfo.io/country`, `ipwho.is`, `sysad.win`, `ip-api.com/json` in that order and takes the first valid 2-letter code (3 rounds). `sysad.win` and `ip-api.com` must be queried over **http** (https is broken for both); `ipwho.is` returns indented JSON, so the grep has to tolerate the space after the colon.
+- **Never let the country detection end up empty.** Empty `REGION` means the CN mirror is skipped and `registry.k8s.io` is used, whose manifest requests 307-redirect to `europe-west3-docker.pkg.dev` — unreachable from CN, so containerd retries forever, `kubeadm init` never returns, and nodes crash-loop on a missing `/var/lib/kubelet/config.yaml`. `functions.sh` has a mirror-reachability fallback for this; keep it.
 - `setup-k8s/scripts/01-base-pkgs.sh` is OS-specific and changes host state: installs base packages, disables swap, configures chrony, loads kernel modules, and disables firewalld/SELinux on RPM distros.
 - `setup-k8s/scripts/04-kubeadm-init.sh` switches the kubeadm image repository to Aliyun in CN, otherwise uses `registry.k8s.io`.
 - The init script expects `MASTER_NODES`, `LoadBalancer`, `POD_CIDR`, and `SERVICE_CIDR` to be set; `config.sh.example` shows the default shape.
+- `setup-k8s/scripts/*.sh` have no `set -e`, so their exit code is the last command's — never treat a non-zero exit as "the step failed" without checking the actual state.
+- `setup-k8s/scripts/08-2-cni-calico.sh` rewrites `quay.io/calico/` to the Docker Hub cache `registry.cn-beijing.aliyuncs.com/my-dockermirrors/`, which does not hold the calico images — pods land in `ImagePullBackOff` and nodes stay `NotReady`.
 
 ## Workflows and auth
 - GitHub Actions workflows are the real orchestration layer; many are manual `workflow_dispatch` jobs and some generate `setup-k8s/config.sh` during the run.

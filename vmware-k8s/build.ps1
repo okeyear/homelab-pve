@@ -49,7 +49,11 @@ param(
     # 弹 VMware 窗口跑模板构建(排障用)。
     # 默认不弹 —— 图形界面接管由 vmrun 启动的 VM 之后,关机时会把
     # 整个 output 目录当临时产物清掉(实测 20G 的 disk.vmdk 一起没了)。
-    [switch]$ShowWindow
+    [switch]$ShowWindow,
+
+    # 带控制台启动三个节点:它们会出现在 VMware Workstation 的库里,
+    # 并且有实时画面。默认不带 —— 跑流水线不需要窗口。
+    [switch]$ShowConsole
 )
 
 $ErrorActionPreference = 'Stop'
@@ -536,11 +540,12 @@ function Invoke-CloneNodes {
 function Invoke-BootNodes {
     param(
         [Parameter(Mandatory)][string]$VmrunExe,
-        [Parameter(Mandatory)][string]$SshExe
+        [Parameter(Mandatory)][string]$SshExe,
+        [switch]$ShowConsole
     )
     Write-Step '启动节点并等待就绪'
     foreach ($n in $Nodes) {
-        Start-NodeVm -VmrunExe $VmrunExe -Node $n
+        Start-NodeVm -VmrunExe $VmrunExe -Node $n -Gui:$ShowConsole
     }
     $sshArgs = New-SshArgs -SshExe $SshExe -KeyFile $SshKey -KnownHosts $KnownHosts
     foreach ($n in $Nodes) {
@@ -628,7 +633,7 @@ if (& $run 'clone') {
 }
 
 if (& $run 'boot') {
-    Invoke-BootNodes -VmrunExe $vmrun -SshExe $sshExe
+    Invoke-BootNodes -VmrunExe $vmrun -SshExe $sshExe -ShowConsole:$ShowConsole
 }
 
 if (& $run 'k8s') {

@@ -32,6 +32,7 @@ function Assert-True {
 }
 
 . (Join-Path $Root 'lib\common.ps1')
+. (Join-Path $Root 'lib\k8s.ps1')
 
 # ================================================================ timeout
 Write-Host '=== Add-RemoteTimeout:单程序 ==='
@@ -91,15 +92,80 @@ if (Test-Path -LiteralPath $shim) {
     Assert-True (-not $hasBom) '补丁脚本没有 BOM(BOM 会挡住 bash 的第一行)'
     Assert-True ($hasCr -eq 0) '补丁脚本是 LF 换行'
 
-    # 必须定义 curl 函数,并且只拦 ipinfo.io
+    # 必须定义 curl 函数,并且把四个探测源都拦下来
     Assert-True ($text -match '(?m)^curl\(\)\s*\{') '定义了 curl 函数'
-    Assert-True ($text -match '\*ipinfo\.io\*') '只拦 ipinfo.io'
+    foreach ($h in @('ipinfo\.io', 'ipwho\.is', 'sysad\.win', 'ip-api\.com')) {
+        Assert-True ($text -match $h) "拦住了 $h"
+    }
     Assert-True ($text.Contains('command curl "$@"')) '其他调用用 command curl 原样放行'
     # 文件路径要和 Install-RegionShim 里写的对得上
     Assert-True ($text -match '/tmp/vmware-k8s/region\.txt') '地区从 /tmp/vmware-k8s/region.txt 读'
-    # functions.sh 的 grep 要求 country 的值后面紧跟 `",`
-    Assert-True ($text -match '\\"country\\": \\"\$r\\",') 'JSON 里 country 后面带逗号(跟 functions.sh 的 grep 对得上)'
+    # 返回格式要跟各家的原始格式一致,不然仓库的 grep 提取不出来
+    Assert-True ($text -match 'country_code') 'ipwho.is 的格式对(country_code)'
+    Assert-True ($text -match 'iso_code') 'sysad.win 的格式对(iso_code)'
+    Assert-True ($text -match 'countryCode') 'ip-api.com 的格式对(countryCode)'
+    Assert-True ($text -match 'ipinfo\.io/country') 'ipinfo.io 的 /country 裸代码路径也拦了'
 }
+
+# ================================================================ 仓库的地区判定
+Write-Host ''
+Write-Host '=== 仓库 functions.sh 的地区判定 ==='
+$repoScripts = Join-Path (Split-Path -Parent $Root) 'setup-k8s\scripts'
+$fnPath = Join-Path $repoScripts 'functions.sh'
+if (-not (Test-Path -LiteralPath $fnPath)) {
+    Write-Host '  [skip] 旁边没有 setup-k8s/scripts,跳过(只跑 vmware-k8s 目录下的测试时会这样)' -ForegroundColor Yellow
+}
+else {
+    $fn = [System.IO.File]::ReadAllText($fnPath, [System.Text.Encoding]::UTF8)
+    Assert-True ($fn -match 'detect_region\(\)\s*\{') 'functions.sh 里有 detect_region()'
+    Assert-True ($fn -match 'curl_probe\(\)\s*\{') 'functions.sh 里有 curl_probe()'
+    Assert-True ($fn -match 'REGION=\$\(detect_region\)') 'REGION 由 detect_region 决定'
+    foreach ($u in @('ipinfo\.io/country', 'ipwho\.is', 'sysad\.win', 'ip-api\.com')) {
+        Assert-True ($fn -match $u) "detect_region 里有 $u 这个源"
+    }
+    # ipwho.is 返回缩进 JSON,冒号后有空格 —— grep 必须容忍
+    Assert-True ($fn.Contains('"country_code":[[:space:]]*')) 'ipwho.is 的提取要容忍冒号后的空格'
+    # 这两个源 https 不通(证书主机名不匹配 / 免费端点 403)
+    Assert-True ($fn -match "curl_probe 'http://sysad\.win'") 'sysad.win 用 http(https 证书主机名不匹配)'
+    Assert-True ($fn -match "curl_probe 'http://ip-api\.com/json'") 'ip-api.com 用 http(https 免费端点 403)'
+    # 四家全挂时的兜底:问镜像源通不通
+    Assert-True ($fn -match 'registry\.cn-hangzhou\.aliyuncs\.com/v2/') '四家全挂时还有镜像源可达性兜底'
+}
+
+# ================================================================ 集群就绪判据
+Write-Host ''
+Write-Host '=== 集群就绪判据(节点 Ready 不等于集群可用) ==='
+$k8sText = [System.IO.File]::ReadAllText((Join-Path $Root 'lib\k8s.ps1'), [System.Text.Encoding]::UTF8)
+$buildText = [System.IO.File]::ReadAllText((Join-Path $Root 'build.ps1'), [System.Text.Encoding]::UTF8)
+$lines = @(
+    'kube-system   calico-node-6fpxv                          0/1     Init:ErrImagePull   0          34s   10.10.10.203   k8s-worker2'
+    'kube-system   calico-kube-controllers-7487fbf49f-kgtbh   0/1     ContainerCreating   0          34s   <none>         k8s-worker2'
+    'kube-system   etcd-k8s-master                            1/1     Running             2          52s   10.10.10.201   k8s-master'
+    'kube-system   kube-proxy-2vttc                          1/1     Running             0          45s   10.10.10.201   k8s-master'
+    'default       smoke                                      1/1     Running             0          29s   10.244.126.1   k8s-worker2'
+    'kube-system   some-job                                  0/1     Completed           0          10s   <none>         k8s-master'
+)
+$bad = @(Get-NotReadySystemPods -PodLines $lines)
+Assert-True ($bad.Count -eq 2) "没跑起来的 pod 有 2 个(实际 $($bad.Count))"
+Assert-True (@($bad | Where-Object { $_ -match 'ErrImagePull' }).Count -eq 1) 'ErrImagePull 的被挑出来了'
+Assert-True (@($bad | Where-Object { $_ -match 'ContainerCreating' }).Count -eq 1) 'ContainerCreating 的被挑出来了'
+Assert-True (@($bad | Where-Object { $_ -match 'Running' }).Count -eq 0) '正常 Running 的没被误挑'
+
+# 0/1 但状态是 Running 的,也不算就绪
+$half = @('kube-system   calico-node-x   0/1   Running   0   5s   10.0.0.1   n1')
+$bad2 = @(Get-NotReadySystemPods -PodLines $half)
+Assert-True ($bad2.Count -eq 1) 'READY 是 0/1 的不算就绪(挑出来了)'
+
+# 全好的时候不该挑出任何东西
+$good = @(
+    'kube-system   etcd-k8s-master   1/1   Running   2   52s   10.10.10.201   k8s-master'
+    'kube-system   calico-node-a     1/1   Running   0   40s   10.10.10.201   k8s-master'
+)
+Assert-True (@(Get-NotReadySystemPods -PodLines $good).Count -eq 0) '全都 Running 时不挑出任何 pod'
+
+# 接线:等待集群就绪时必须同时看节点和系统 pod
+Assert-True ($k8sText -match 'SystemPodsReady') '等待集群就绪时用了 SystemPodsReady'
+Assert-True ($k8sText -match 'AllReady\s+-and\s+\$st\.SystemPodsReady') '节点 Ready 和系统 pod 都得满足'
 
 # ================================================================ CNI 兜底
 Write-Host ''
@@ -135,9 +201,13 @@ Assert-True ($k8sText -match 'BASH_ENV=') 'Invoke-RepoScript 注入 BASH_ENV'
 Assert-True ($k8sText -match 'MASTER_NODES\s*=\s*\$masterList') 'kubeadm init 拿到了 MASTER_NODES'
 Assert-True ($buildText -match "ShimFile.*region-shim\.sh") 'build.ps1 把补丁脚本路径传给了 k8s 阶段'
 
-# 否定测试:仓库脚本不能被我们改过
+# 否定测试:仓库脚本里不能有我们的注入痕迹。
+#
+# functions.sh 的**地区判定**是按要求改过的(多源探测 + 兜底),
+# 但注入补丁(BASH_ENV / VMWARE_K8S_REGION)只能活在 vmware-k8s 这一层,
+# 仓库的脚本里一行都不该有。
 Write-Host ''
-Write-Host '=== 仓库脚本一个字都没改 ==='
+Write-Host '=== 仓库脚本里没有我们的注入痕迹 ==='
 $repoScripts = Join-Path (Split-Path -Parent $Root) 'setup-k8s\scripts'
 foreach ($f in @('functions.sh', '04-kubeadm-init.sh', '08-2-cni-calico.sh')) {
     $p = Join-Path $repoScripts $f
